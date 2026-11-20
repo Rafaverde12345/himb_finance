@@ -26,8 +26,16 @@ const ACCOUNT_TYPES = [
   ["other", "Otra"],
 ];
 
+const NAV_ITEMS = [
+  ["overview", "Resumen", "Vista general"],
+  ["activity", "Movimientos", "Ingresos y gastos"],
+  ["accounts", "Cuentas", "Saldos y medios"],
+  ["planning", "Planificación", "Presupuestos y metas"],
+  ["categories", "Categorías", "Clasificación"],
+];
+
 function formatMoney(value, currency = "BRL") {
-  return new Intl.NumberFormat("pt-BR", {
+  return new Intl.NumberFormat("es", {
     style: "currency",
     currency,
   }).format(Number(value));
@@ -87,6 +95,7 @@ export default function FinanceApp() {
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
+  const [activeView, setActiveView] = useState("overview");
 
   const loadData = useCallback(
     async (userId) => {
@@ -276,6 +285,35 @@ export default function FinanceApp() {
   }
 
   const dataIsLoading = Boolean(session) && loadedForUser !== session.user.id;
+  const now = session ? new Date() : null;
+  const monthKey = now
+    ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+    : "";
+  const currentMonthTransactions = monthKey
+    ? data.transactions.filter((transaction) => transaction.occurred_on.startsWith(monthKey))
+    : [];
+  const monthTotals = [...new Set(data.accounts.map((account) => account.currency))].map(
+    (currency) => {
+      const accountIds = new Set(
+        data.accounts
+          .filter((account) => account.currency === currency)
+          .map((account) => account.id),
+      );
+      const transactions = currentMonthTransactions.filter((transaction) =>
+        accountIds.has(transaction.account_id),
+      );
+
+      return {
+        currency,
+        income: transactions
+          .filter((transaction) => transaction.kind === "income")
+          .reduce((total, transaction) => total + Number(transaction.amount), 0),
+        expenses: transactions
+          .filter((transaction) => transaction.kind === "expense")
+          .reduce((total, transaction) => total + Number(transaction.amount), 0),
+      };
+    },
+  );
 
   if (authLoading) {
     return (
@@ -366,28 +404,59 @@ export default function FinanceApp() {
   }
 
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-8">
-      <div className="mx-auto max-w-7xl">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-5">
+    <main className="min-h-screen bg-slate-50 lg:flex">
+      <aside className="border-b border-slate-200 bg-white lg:min-h-screen lg:w-64 lg:border-b-0 lg:border-r">
+        <div className="flex items-center justify-between px-5 py-5 lg:block lg:px-6 lg:py-7">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
-              HIMB
-            </p>
-            <p className="mt-1 text-sm text-slate-600">{session.user.email}</p>
+            <p className="text-lg font-bold tracking-[0.12em] text-emerald-800">HIMB</p>
+            <p className="mt-1 hidden text-xs text-slate-500 lg:block">Tu espacio financiero</p>
           </div>
-          <button className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50" onClick={handleSignOut} type="button">
+          <button
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 lg:mt-6 lg:w-full lg:text-sm"
+            onClick={handleSignOut}
+            type="button"
+          >
             Cerrar sesión
           </button>
-        </header>
-
-        <div className="py-7">
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
-            Panel financiero
-          </h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Tus registros son privados y están protegidos por usuario.
-          </p>
         </div>
+        <nav aria-label="Navegación principal" className="flex gap-2 overflow-x-auto px-4 pb-4 lg:block lg:space-y-1 lg:px-3">
+          {NAV_ITEMS.map(([id, label, description]) => (
+            <button
+              aria-current={activeView === id ? "page" : undefined}
+              className={`min-w-max rounded-xl px-4 py-2.5 text-left transition lg:block lg:w-full ${
+                activeView === id
+                  ? "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-100"
+                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              }`}
+              key={id}
+              onClick={() => setActiveView(id)}
+              type="button"
+            >
+              <span className="block text-sm font-semibold">{label}</span>
+              <span className="hidden text-xs text-slate-500 lg:block">{description}</span>
+            </button>
+          ))}
+        </nav>
+        <p className="hidden break-all px-6 pb-6 text-xs text-slate-400 lg:block">
+          Sesión de {session.user.email}
+        </p>
+      </aside>
+
+      <div className="min-w-0 flex-1 px-4 py-6 sm:px-8 lg:px-10 lg:py-8">
+        <div className="mx-auto max-w-7xl">
+          <header className="mb-7">
+            <p className="text-sm font-medium text-slate-500">
+              {now?.toLocaleDateString("es", { month: "long", year: "numeric" })}
+            </p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
+              {NAV_ITEMS.find(([id]) => id === activeView)?.[1]}
+            </h1>
+            <p className="mt-2 text-sm text-slate-600">
+              {activeView === "overview"
+                ? "Un vistazo sencillo a tus finanzas de este mes."
+                : NAV_ITEMS.find(([id]) => id === activeView)?.[2]}
+            </p>
+          </header>
 
         {actionError ? (
           <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
@@ -409,6 +478,124 @@ export default function FinanceApp() {
           <p className="mb-6 text-sm text-slate-600">Cargando tus datos…</p>
         ) : null}
 
+        {activeView === "overview" ? (
+          <div className="space-y-6">
+            <section aria-label="Resumen del mes" className="grid gap-4 md:grid-cols-2">
+              <Panel
+                description="Suma de los ingresos registrados durante este mes."
+                title="Ingresos"
+              >
+                {monthTotals.length ? (
+                  <ul className="space-y-2">
+                    {monthTotals.map(({ currency, income }) => (
+                      <li className="text-2xl font-semibold text-emerald-800" key={currency}>
+                        {formatMoney(income, currency)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyState>Agrega una cuenta para empezar a registrar ingresos.</EmptyState>
+                )}
+              </Panel>
+              <Panel
+                description="Suma de los gastos registrados durante este mes."
+                title="Gastos"
+              >
+                {monthTotals.length ? (
+                  <ul className="space-y-2">
+                    {monthTotals.map(({ currency, expenses }) => (
+                      <li className="text-2xl font-semibold text-slate-900" key={currency}>
+                        {formatMoney(expenses, currency)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyState>Los totales aparecerán cuando agregues tus cuentas.</EmptyState>
+                )}
+              </Panel>
+            </section>
+
+            {data.accounts.length === 0 || data.categories.length === 0 ? (
+              <Panel
+                description="Completa estos pasos para que tu resumen tenga información útil."
+                title="Empieza aquí"
+              >
+                <ol className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    ["accounts", "1. Agrega una cuenta", "Banco, efectivo o ahorro."],
+                    ["categories", "2. Organiza categorías", "Clasifica ingresos y gastos."],
+                    ["activity", "3. Registra movimientos", "Anota lo que entra y sale."],
+                  ].map(([view, title, description]) => (
+                    <li key={view}>
+                      <button
+                        className="h-full w-full rounded-xl border border-slate-200 p-4 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
+                        onClick={() => setActiveView(view)}
+                        type="button"
+                      >
+                        <span className="block text-sm font-semibold text-slate-900">{title}</span>
+                        <span className="mt-1 block text-sm text-slate-600">{description}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </Panel>
+            ) : null}
+
+            <Panel
+              description="Los movimientos más recientes que has registrado."
+              title="Actividad reciente"
+            >
+              {data.transactions.length ? (
+                <ul className="divide-y divide-slate-100">
+                  {data.transactions.slice(0, 5).map((transaction) => (
+                    <li
+                      className="flex flex-wrap items-center justify-between gap-2 py-3"
+                      key={transaction.id}
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">
+                          {transaction.description ||
+                            (transaction.kind === "income" ? "Ingreso" : "Gasto")}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {formatDate(transaction.occurred_on)} ·{" "}
+                          {AccountName({ accountId: transaction.account_id, accounts: data.accounts })} ·{" "}
+                          {CategoryName({ categoryId: transaction.category_id, categories: data.categories })}
+                        </p>
+                      </div>
+                      <span
+                        className={`text-sm font-semibold ${
+                          transaction.kind === "income" ? "text-emerald-700" : "text-slate-800"
+                        }`}
+                      >
+                        {transaction.kind === "income" ? "+" : "−"}
+                        {formatMoney(
+                          transaction.amount,
+                          data.accounts.find((account) => account.id === transaction.account_id)?.currency,
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState>
+                  Aún no hay movimientos. Registra uno para empezar a ver tu actividad aquí.
+                </EmptyState>
+              )}
+              {data.transactions.length ? (
+                <button
+                  className="mt-3 text-sm font-semibold text-emerald-800 hover:underline"
+                  onClick={() => setActiveView("activity")}
+                  type="button"
+                >
+                  Ver todos los movimientos
+                </button>
+              ) : null}
+            </Panel>
+          </div>
+        ) : null}
+
+        {activeView === "categories" ? (
         <div className="grid gap-5 lg:grid-cols-2">
           <Panel description="Agrega categorías para clasificar ingresos y gastos." title="Categorías">
             <form
@@ -448,7 +635,11 @@ export default function FinanceApp() {
               <EmptyState>Aún no hay categorías.</EmptyState>
             )}
           </Panel>
+        </div>
+        ) : null}
 
+        {activeView === "accounts" ? (
+        <div className="grid gap-5 lg:grid-cols-2">
           <Panel description="Registra tus cuentas y saldos iniciales." title="Cuentas">
             <form
               className="grid gap-3 sm:grid-cols-2"
@@ -514,7 +705,11 @@ export default function FinanceApp() {
               <EmptyState>Aún no hay cuentas.</EmptyState>
             )}
           </Panel>
+        </div>
+        ) : null}
 
+        {activeView === "activity" ? (
+        <div className="grid gap-5 lg:grid-cols-2">
           <Panel description="Cada movimiento se asocia a una cuenta." title="Ingresos y gastos">
             {data.accounts.length ? (
               <form
@@ -608,7 +803,11 @@ export default function FinanceApp() {
               <EmptyState>Aún no hay movimientos.</EmptyState>
             )}
           </Panel>
+        </div>
+        ) : null}
 
+        {activeView === "planning" ? (
+        <div className="grid gap-5 lg:grid-cols-2">
           <Panel description="Organiza límites mensuales, opcionalmente por categoría." title="Presupuestos">
             <form
               className="grid gap-3 sm:grid-cols-2"
@@ -742,6 +941,8 @@ export default function FinanceApp() {
               <EmptyState>Aún no hay metas.</EmptyState>
             )}
           </Panel>
+        </div>
+        ) : null}
         </div>
       </div>
     </main>
