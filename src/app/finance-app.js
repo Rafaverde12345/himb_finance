@@ -8,6 +8,7 @@ const EMPTY_DATA = {
   budgets: [],
   categories: [],
   goals: [],
+  transfers: [],
   transactions: [],
 };
 
@@ -205,14 +206,30 @@ export default function FinanceApp() {
   const [transactionSearch, setTransactionSearch] = useState("");
   const [transactionKindFilter, setTransactionKindFilter] = useState("all");
   const [transactionOrder, setTransactionOrder] = useState("newest");
+  const [transferSourceId, setTransferSourceId] = useState("");
+  const [transferDestinationId, setTransferDestinationId] = useState("");
+  const selectedTransferSource =
+    data.accounts.find((account) => account.id === transferSourceId) ?? data.accounts[0];
+  const transferDestinations = selectedTransferSource
+    ? data.accounts.filter(
+        (account) =>
+          account.id !== selectedTransferSource.id &&
+          account.currency === selectedTransferSource.currency,
+      )
+    : [];
+  const selectedTransferDestinationId = transferDestinations.some(
+    (account) => account.id === transferDestinationId,
+  )
+    ? transferDestinationId
+    : transferDestinations[0]?.id ?? "";
 
   const loadData = useCallback(
     async (userId) => {
       const results = await Promise.all([
         supabase
-          .from("himb_accounts")
-          .select("id, name, account_type, currency, opening_balance, created_at")
-          .order("created_at", { ascending: false })
+          .from("himb_account_balances")
+          .select("id, name, account_type, currency, opening_balance, current_balance")
+          .order("name")
           .limit(100),
         supabase
           .from("himb_categories")
@@ -222,6 +239,11 @@ export default function FinanceApp() {
         supabase
           .from("himb_transactions")
           .select("id, account_id, category_id, kind, amount, description, occurred_on")
+          .order("occurred_on", { ascending: false })
+          .limit(100),
+        supabase
+          .from("himb_transfers")
+          .select("id, from_account_id, to_account_id, currency, amount, description, occurred_on")
           .order("occurred_on", { ascending: false })
           .limit(100),
         supabase
@@ -249,8 +271,9 @@ export default function FinanceApp() {
         accounts: results[0].data,
         categories: results[1].data,
         transactions: results[2].data,
-        budgets: results[3].data,
-        goals: results[4].data,
+        transfers: results[3].data,
+        budgets: results[4].data,
+        goals: results[5].data,
       });
       setLoadedForUser(userId);
       setLoadError("");
@@ -408,6 +431,48 @@ export default function FinanceApp() {
     }
   }
 
+  async function saveTransfer(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const userId = session?.user?.id;
+
+    if (!userId) {
+      setActionError("Inicia sesión antes de guardar una transferencia.");
+      return;
+    }
+
+    setSaving(true);
+    setActionError("");
+    setLoadError("");
+    setNotice("");
+
+    try {
+      const formData = new FormData(form);
+      const { error } = await supabase.from("himb_transfers").insert({
+        from_account_id: formData.get("from_account_id"),
+        to_account_id: formData.get("to_account_id"),
+        currency: selectedTransferSource?.currency,
+        amount: Number(formData.get("amount")),
+        description: String(formData.get("description")).trim(),
+        occurred_on: formData.get("occurred_on"),
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      form.reset();
+      setTransferSourceId("");
+      setTransferDestinationId("");
+      await loadData(userId);
+      setNotice("Transferencia guardada. Los saldos de ambas cuentas se actualizaron.");
+    } catch (error) {
+      setActionError(`No se pudo guardar la transferencia: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const dataIsLoading = Boolean(session) && loadedForUser !== session.user.id;
   const now = session ? new Date() : null;
   const monthKey = now
@@ -437,6 +502,14 @@ export default function FinanceApp() {
           .reduce((total, transaction) => total + Number(transaction.amount), 0),
       };
     },
+  );
+  const accountTotals = [...new Set(data.accounts.map((account) => account.currency))].map(
+    (currency) => ({
+      currency,
+      balance: data.accounts
+        .filter((account) => account.currency === currency)
+        .reduce((total, account) => total + Number(account.current_balance), 0),
+    }),
   );
   const chartMonths = now
     ? Array.from({ length: 6 }, (_, index) => {
@@ -479,18 +552,46 @@ export default function FinanceApp() {
       return { currency, months };
     },
   );
+  const movementRows = [
+    ...data.transactions.map((transaction) => ({
+      ...transaction,
+      movement_type: transaction.kind,
+    })),
+    ...data.transfers.map((transfer) => ({
+      ...transfer,
+      movement_type: "transfer",
+    })),
+  ]
+    .sort(
+      (left, right) =>
+        right.occurred_on.localeCompare(left.occurred_on) || right.id.localeCompare(left.id),
+    )
+    .slice(0, 100);
   const searchTerm = transactionSearch.trim().toLocaleLowerCase("es");
-  const filteredTransactions = data.transactions
-    .filter((transaction) => {
-      if (transactionKindFilter !== "all" && transaction.kind !== transactionKindFilter) {
+  const filteredTransactions = movementRows
+    .filter((movement) => {
+      if (transactionKindFilter !== "all" && movement.movement_type !== transactionKindFilter) {
         return false;
       }
 
+      const relatedAccountNames =
+        movement.movement_type === "transfer"
+          ? [
+              AccountName({ accountId: movement.from_account_id, accounts: data.accounts }),
+              AccountName({ accountId: movement.to_account_id, accounts: data.accounts }),
+            ]
+          : [AccountName({ accountId: movement.account_id, accounts: data.accounts })];
       const searchableText = [
-        transaction.description,
-        AccountName({ accountId: transaction.account_id, accounts: data.accounts }),
-        CategoryName({ categoryId: transaction.category_id, categories: data.categories }),
-        transaction.kind === "income" ? "ingreso" : "gasto",
+        movement.description,
+        ...relatedAccountNames,
+        movement.movement_type === "transfer"
+          ? "transferencia"
+          : CategoryName({ categoryId: movement.category_id, categories: data.categories }),
+        movement.movement_type === "income"
+          ? "ingreso"
+          : movement.movement_type === "expense"
+            ? "gasto"
+            : "transferencia",
       ]
         .join(" ")
         .toLocaleLowerCase("es");
@@ -702,7 +803,7 @@ export default function FinanceApp() {
 
         {activeView === "overview" ? (
           <div className="space-y-6">
-            <section aria-label="Resumen del mes" className="grid gap-4 md:grid-cols-2">
+            <section aria-label="Resumen del mes" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <Panel
                 description="Suma de los ingresos registrados durante este mes."
                 title="Ingresos"
@@ -734,6 +835,26 @@ export default function FinanceApp() {
                 ) : (
                   <EmptyState>Los totales aparecerán cuando agregues tus cuentas.</EmptyState>
                 )}
+              </Panel>
+              <Panel
+                description="Saldos iniciales más ingresos, gastos y transferencias. Se muestran por moneda."
+                title="Saldo actual de cuentas"
+              >
+                {accountTotals.length ? (
+                  <ul className="space-y-2">
+                    {accountTotals.map(({ currency, balance }) => (
+                      <li className="text-2xl font-semibold text-slate-900" key={currency}>
+                        {formatMoney(balance, currency)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyState>Agrega una cuenta para calcular su saldo actual.</EmptyState>
+                )}
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  Las tarjetas con deuda pueden mostrar un saldo negativo. No es un cálculo de
+                  patrimonio neto.
+                </p>
               </Panel>
             </section>
 
@@ -820,6 +941,7 @@ export default function FinanceApp() {
                     <option value="all">Todos</option>
                     <option value="income">Ingresos</option>
                     <option value="expense">Gastos</option>
+                    <option value="transfer">Transferencias</option>
                   </select>
                 </label>
                 <label className="block text-sm font-medium text-slate-700">
@@ -835,7 +957,7 @@ export default function FinanceApp() {
                 </label>
               </div>
               <p aria-live="polite" className="mt-4 text-xs text-slate-500">
-                {filteredTransactions.length} de {data.transactions.length} movimientos
+                {filteredTransactions.length} de {movementRows.length} movimientos
               </p>
               {filteredTransactions.length ? (
                 <div className="mt-2 overflow-x-auto">
@@ -851,47 +973,71 @@ export default function FinanceApp() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredTransactions.map((transaction) => {
-                        const account = data.accounts.find(
-                          (item) => item.id === transaction.account_id,
-                        );
+                      {filteredTransactions.map((movement) => {
+                        const isTransfer = movement.movement_type === "transfer";
+                        const isIncome = movement.movement_type === "income";
+                        const account = isTransfer
+                          ? null
+                          : data.accounts.find((item) => item.id === movement.account_id);
 
                         return (
-                          <tr className="hover:bg-slate-50" key={transaction.id}>
+                          <tr
+                            className="hover:bg-slate-50"
+                            key={`${movement.movement_type}-${movement.id}`}
+                          >
                             <td className="whitespace-nowrap px-3 py-3 text-slate-600">
-                              {formatDate(transaction.occurred_on)}
+                              {formatDate(movement.occurred_on)}
                             </td>
                             <td className="px-3 py-3">
                               <span
                                 className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                                  transaction.kind === "income"
-                                    ? "bg-emerald-50 text-emerald-800"
-                                    : "bg-rose-50 text-rose-800"
+                                  isTransfer
+                                    ? "bg-sky-50 text-sky-800"
+                                    : isIncome
+                                      ? "bg-emerald-50 text-emerald-800"
+                                      : "bg-rose-50 text-rose-800"
                                 }`}
                               >
-                                {transaction.kind === "income" ? "Ingreso" : "Gasto"}
+                                {isTransfer ? "Transferencia" : isIncome ? "Ingreso" : "Gasto"}
                               </span>
                             </td>
                             <td className="max-w-56 truncate px-3 py-3 font-medium text-slate-900">
-                              {transaction.description ||
-                                (transaction.kind === "income" ? "Ingreso" : "Gasto")}
+                              {movement.description ||
+                                (isTransfer ? "Transferencia" : isIncome ? "Ingreso" : "Gasto")}
                             </td>
-                            <td className="px-3 py-3 text-slate-600">{account?.name ?? "Cuenta no disponible"}</td>
                             <td className="px-3 py-3 text-slate-600">
-                              {CategoryName({
-                                categoryId: transaction.category_id,
-                                categories: data.categories,
-                              })}
+                              {isTransfer
+                                ? `${AccountName({
+                                    accountId: movement.from_account_id,
+                                    accounts: data.accounts,
+                                  })} → ${AccountName({
+                                    accountId: movement.to_account_id,
+                                    accounts: data.accounts,
+                                  })}`
+                                : account?.name ?? "Cuenta no disponible"}
+                            </td>
+                            <td className="px-3 py-3 text-slate-600">
+                              {isTransfer
+                                ? "—"
+                                : CategoryName({
+                                    categoryId: movement.category_id,
+                                    categories: data.categories,
+                                  })}
                             </td>
                             <td
                               className={`whitespace-nowrap px-3 py-3 text-right font-semibold ${
-                                transaction.kind === "income"
-                                  ? "text-emerald-700"
-                                  : "text-slate-800"
+                                isTransfer
+                                  ? "text-sky-800"
+                                  : isIncome
+                                    ? "text-emerald-700"
+                                    : "text-slate-800"
                               }`}
                             >
-                              {transaction.kind === "income" ? "+" : "−"}
-                              {formatMoney(transaction.amount, account?.currency)}
+                              {isTransfer ? "" : isIncome ? "+" : "−"}
+                              {formatMoney(
+                                movement.amount,
+                                isTransfer ? movement.currency : account?.currency,
+                              )}
                             </td>
                           </tr>
                         );
@@ -901,7 +1047,7 @@ export default function FinanceApp() {
                 </div>
               ) : (
                 <EmptyState>
-                  {data.transactions.length
+                  {movementRows.length
                     ? "No hay movimientos que coincidan. Prueba cambiar la búsqueda o los filtros."
                     : "Aún no hay movimientos. Registra uno para empezar a ver tu actividad aquí."}
                 </EmptyState>
@@ -955,7 +1101,10 @@ export default function FinanceApp() {
 
         {activeView === "accounts" ? (
         <div className="grid gap-5 lg:grid-cols-2">
-          <Panel description="Registra tus cuentas y saldos iniciales." title="Cuentas">
+          <Panel
+            description="El saldo actual se calcula desde el saldo inicial y los movimientos de cada cuenta."
+            title="Cuentas"
+          >
             <form
               className="grid gap-3 sm:grid-cols-2"
               onSubmit={(event) =>
@@ -1001,6 +1150,10 @@ export default function FinanceApp() {
                   type="number"
                 />
               </FormField>
+              <p className="text-xs leading-5 text-slate-500 sm:col-span-2">
+                En una tarjeta de crédito, registra la deuda inicial como negativa. Los gastos
+                reducen el saldo y los ingresos o transferencias de pago lo aumentan.
+              </p>
               <button className={`${BUTTON_CLASS} sm:col-span-2`} disabled={saving} type="submit">
                 Agregar cuenta
               </button>
@@ -1010,8 +1163,11 @@ export default function FinanceApp() {
                 {data.accounts.map((account) => (
                   <li className="flex justify-between gap-3 py-2 text-sm" key={account.id}>
                     <span className="font-medium text-slate-800">{account.name}</span>
-                    <span className="text-slate-600">
-                      {formatMoney(account.opening_balance, account.currency)}
+                    <span className="text-right">
+                      <span className="block text-xs text-slate-500">Saldo actual</span>
+                      <span className="font-medium text-slate-800">
+                        {formatMoney(account.current_balance, account.currency)}
+                      </span>
                     </span>
                   </li>
                 ))}
@@ -1116,6 +1272,130 @@ export default function FinanceApp() {
               </ul>
             ) : (
               <EmptyState>Aún no hay movimientos.</EmptyState>
+            )}
+          </Panel>
+
+          <Panel
+            description="Mueve dinero entre cuentas de la misma moneda. Una transferencia no cuenta como ingreso ni como gasto."
+            title="Transferir entre cuentas"
+          >
+            {data.accounts.length ? (
+              <form className="grid gap-3 sm:grid-cols-2" onSubmit={saveTransfer}>
+                <FormField label="Desde">
+                  <select
+                    className={FIELD_CLASS}
+                    name="from_account_id"
+                    onChange={(event) => {
+                      setTransferSourceId(event.target.value);
+                      setTransferDestinationId("");
+                    }}
+                    required
+                    value={selectedTransferSource?.id ?? ""}
+                  >
+                    {data.accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name} · {account.currency}
+                      </option>
+                    ))}
+                  </select>
+                </FormField>
+                <FormField label="Hacia">
+                  <select
+                    className={FIELD_CLASS}
+                    disabled={!transferDestinations.length}
+                    name="to_account_id"
+                    onChange={(event) => setTransferDestinationId(event.target.value)}
+                    required
+                    value={selectedTransferDestinationId}
+                  >
+                    {transferDestinations.length ? (
+                      transferDestinations.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name} · {account.currency}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No hay otra cuenta en {selectedTransferSource?.currency}</option>
+                    )}
+                  </select>
+                </FormField>
+                <FormField label={`Importe${selectedTransferSource ? ` (${selectedTransferSource.currency})` : ""}`}>
+                  <input
+                    className={FIELD_CLASS}
+                    min="0.01"
+                    name="amount"
+                    required
+                    step="0.01"
+                    type="number"
+                  />
+                </FormField>
+                <FormField label="Fecha">
+                  <input
+                    className={FIELD_CLASS}
+                    defaultValue={new Date().toISOString().slice(0, 10)}
+                    name="occurred_on"
+                    required
+                    type="date"
+                  />
+                </FormField>
+                <FormField label="Descripción (opcional)">
+                  <input className={FIELD_CLASS} maxLength={240} name="description" />
+                </FormField>
+                {!transferDestinations.length ? (
+                  <p className="text-xs leading-5 text-amber-800 sm:col-span-2">
+                    Para transferir, necesitas dos cuentas con la misma moneda. Las conversiones
+                    entre monedas aún no están disponibles.
+                  </p>
+                ) : null}
+                <button
+                  className={`${BUTTON_CLASS} sm:col-span-2`}
+                  disabled={saving || !transferDestinations.length}
+                  type="submit"
+                >
+                  {saving ? "Guardando…" : "Registrar transferencia"}
+                </button>
+              </form>
+            ) : (
+              <EmptyState>Agrega al menos dos cuentas para registrar una transferencia.</EmptyState>
+            )}
+          </Panel>
+
+          <Panel
+            description="Las transferencias afectan ambos saldos, pero no cambian ingresos ni gastos."
+            title="Transferencias recientes"
+          >
+            {data.transfers.length ? (
+              <ul className="divide-y divide-slate-100">
+                {data.transfers.map((transfer) => (
+                  <li
+                    className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
+                    key={transfer.id}
+                  >
+                    <div>
+                      <p className="font-medium text-slate-900">
+                        {AccountName({
+                          accountId: transfer.from_account_id,
+                          accounts: data.accounts,
+                        })}{" "}
+                        <span aria-hidden="true">→</span>{" "}
+                        {AccountName({
+                          accountId: transfer.to_account_id,
+                          accounts: data.accounts,
+                        })}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatDate(transfer.occurred_on)}
+                        {transfer.description ? ` · ${transfer.description}` : ""}
+                      </p>
+                    </div>
+                    <span className="font-semibold text-sky-800">
+                      {formatMoney(transfer.amount, transfer.currency)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <EmptyState>Todavía no hay transferencias.</EmptyState>
             )}
           </Panel>
         </div>

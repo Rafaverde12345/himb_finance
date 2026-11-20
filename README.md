@@ -42,6 +42,19 @@ URL Configuration > Redirect URLs**:
 El correo de recuperacion usa esa ruta para establecer una sesion temporal y
 permitir que el usuario defina una nueva contraseña.
 
+## Saldos y transferencias
+
+Antes de usar saldos calculados o transferencias, aplica
+`supabase/migrations/20261119212100_himb_transfers_and_account_balances.sql`
+al proyecto de HIMB desde Supabase. La migracion agrega transferencias entre
+cuentas de la misma moneda y una vista protegida para calcular el saldo actual.
+
+El saldo de cada cuenta es el saldo inicial, mas ingresos, menos gastos, mas
+transferencias recibidas, menos transferencias enviadas. En cuentas de credito,
+una deuda inicial debe registrarse como negativa; los gastos aumentan la deuda
+y los pagos la reducen. Las transferencias no cuentan como ingreso ni como
+gasto, y las conversiones entre monedas aun no estan soportadas.
+
 ## Datos financieros
 
 HIMB usa autenticacion por correo y contrasena. Las tablas de cuentas,
