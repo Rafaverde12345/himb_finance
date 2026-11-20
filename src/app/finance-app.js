@@ -81,6 +81,23 @@ function AccountName({ accountId, accounts }) {
   return accounts.find((account) => account.id === accountId)?.name ?? "Cuenta no disponible";
 }
 
+async function fetchAllRows(createQuery) {
+  const pageSize = 1000;
+  const rows = [];
+
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await createQuery().range(offset, offset + pageSize - 1);
+    if (error) {
+      throw error;
+    }
+
+    rows.push(...data);
+    if (data.length < pageSize) {
+      return rows;
+    }
+  }
+}
+
 function MonthlyCashFlowChart({ currency, months }) {
   const left = 58;
   const top = 14;
@@ -187,6 +204,299 @@ function MonthlyCashFlowChart({ currency, months }) {
   );
 }
 
+function EditRecordDialog({ entry, accounts, categories, error, saving, onClose, onSubmit }) {
+  const { table, record } = entry;
+  const title = {
+    himb_accounts: "Editar cuenta",
+    himb_categories: "Editar categoría",
+    himb_transactions: "Editar movimiento",
+    himb_transfers: "Editar transferencia",
+    himb_budgets: "Editar presupuesto",
+    himb_goals: "Editar meta",
+  }[table];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/40 p-4">
+      <section
+        aria-labelledby="edit-record-title"
+        aria-modal="true"
+        className="my-auto max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+        role="dialog"
+      >
+        <h2 className="text-xl font-semibold text-slate-950" id="edit-record-title">
+          {title}
+        </h2>
+        <form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={onSubmit}>
+          {table === "himb_accounts" ? (
+            <>
+              <FormField label="Nombre">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.name}
+                  maxLength={100}
+                  name="name"
+                  required
+                />
+              </FormField>
+              <FormField label="Saldo inicial">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.opening_balance}
+                  name="opening_balance"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+              </FormField>
+              <p className="text-xs leading-5 text-slate-500 sm:col-span-2">
+                La moneda y el tipo de cuenta no se editan para preservar la interpretación de los
+                movimientos existentes.
+              </p>
+            </>
+          ) : null}
+          {table === "himb_categories" ? (
+            <>
+              <FormField label="Nombre">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.name}
+                  maxLength={100}
+                  name="name"
+                  required
+                />
+              </FormField>
+              <p className="text-xs leading-5 text-slate-500 sm:col-span-2">
+                Tipo: {record.kind === "income" ? "Ingreso" : "Gasto"}. El tipo no se cambia para
+                evitar clasificaciones incompatibles.
+              </p>
+            </>
+          ) : null}
+          {table === "himb_transactions" ? (
+            <>
+              <FormField label="Cuenta">
+                <select className={FIELD_CLASS} defaultValue={record.account_id} name="account_id" required>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} · {account.currency}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Categoría">
+                <select className={FIELD_CLASS} defaultValue={record.category_id ?? ""} name="category_id">
+                  <option value="">Sin categoría</option>
+                  {categories
+                    .filter((category) => category.kind === record.kind)
+                    .map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                </select>
+              </FormField>
+              <FormField label="Importe">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.amount}
+                  min="0.01"
+                  name="amount"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+              </FormField>
+              <FormField label="Fecha">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.occurred_on}
+                  name="occurred_on"
+                  required
+                  type="date"
+                />
+              </FormField>
+              <FormField label="Descripción">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.description}
+                  maxLength={240}
+                  name="description"
+                />
+              </FormField>
+              <p className="text-xs leading-5 text-slate-500 sm:col-span-2">
+                Tipo: {record.kind === "income" ? "Ingreso" : "Gasto"}. Para cambiarlo, elimina el
+                movimiento y regístralo de nuevo.
+              </p>
+            </>
+          ) : null}
+          {table === "himb_transfers" ? (
+            <>
+              <FormField label="Importe">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.amount}
+                  min="0.01"
+                  name="amount"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+              </FormField>
+              <FormField label="Fecha">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.occurred_on}
+                  name="occurred_on"
+                  required
+                  type="date"
+                />
+              </FormField>
+              <FormField label="Descripción">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.description}
+                  maxLength={240}
+                  name="description"
+                />
+              </FormField>
+              <p className="text-xs text-slate-500 sm:col-span-2">
+                {AccountName({ accountId: record.from_account_id, accounts })} →{" "}
+                {AccountName({ accountId: record.to_account_id, accounts })} · {record.currency}
+              </p>
+            </>
+          ) : null}
+          {table === "himb_budgets" ? (
+            <>
+              <FormField label="Nombre">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.name}
+                  maxLength={100}
+                  name="name"
+                  required
+                />
+              </FormField>
+              <FormField label="Categoría">
+                <select className={FIELD_CLASS} defaultValue={record.category_id ?? ""} name="category_id">
+                  <option value="">General</option>
+                  {categories
+                    .filter((category) => category.kind === "expense")
+                    .map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                </select>
+              </FormField>
+              <FormField label="Límite mensual">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.monthly_limit}
+                  min="0.01"
+                  name="monthly_limit"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+              </FormField>
+              <FormField label="Mes">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.period_start.slice(0, 7)}
+                  name="period_start"
+                  required
+                  type="month"
+                />
+              </FormField>
+              <FormField label="Moneda">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.currency}
+                  maxLength={3}
+                  minLength={3}
+                  name="currency"
+                  pattern="[A-Za-z]{3}"
+                  required
+                />
+              </FormField>
+            </>
+          ) : null}
+          {table === "himb_goals" ? (
+            <>
+              <FormField label="Nombre">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.name}
+                  maxLength={100}
+                  name="name"
+                  required
+                />
+              </FormField>
+              <FormField label="Fecha objetivo (opcional)">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.target_date ?? ""}
+                  name="target_date"
+                  type="date"
+                />
+              </FormField>
+              <FormField label="Importe objetivo">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.target_amount}
+                  min="0.01"
+                  name="target_amount"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+              </FormField>
+              <FormField label="Ahorrado hasta ahora">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.current_amount}
+                  min="0"
+                  name="current_amount"
+                  required
+                  step="0.01"
+                  type="number"
+                />
+              </FormField>
+              <FormField label="Moneda">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={record.currency}
+                  maxLength={3}
+                  minLength={3}
+                  name="currency"
+                  pattern="[A-Za-z]{3}"
+                  required
+                />
+              </FormField>
+            </>
+          ) : null}
+          {error ? (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 sm:col-span-2" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="flex justify-end gap-2 sm:col-span-2">
+            <button
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+              onClick={onClose}
+              type="button"
+            >
+              Cancelar
+            </button>
+            <button className={BUTTON_CLASS} disabled={saving} type="submit">
+              {saving ? "Guardando…" : "Guardar cambios"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 export default function FinanceApp() {
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const sessionRef = useRef(null);
@@ -202,10 +512,13 @@ export default function FinanceApp() {
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
+  const [editingRecord, setEditingRecord] = useState(null);
   const [activeView, setActiveView] = useState("overview");
   const [transactionSearch, setTransactionSearch] = useState("");
   const [transactionKindFilter, setTransactionKindFilter] = useState("all");
   const [transactionOrder, setTransactionOrder] = useState("newest");
+  const [movementPage, setMovementPage] = useState(0);
+  const [transactionEntryKind, setTransactionEntryKind] = useState("expense");
   const [transferSourceId, setTransferSourceId] = useState("");
   const [transferDestinationId, setTransferDestinationId] = useState("");
   const selectedTransferSource =
@@ -226,54 +539,54 @@ export default function FinanceApp() {
   const loadData = useCallback(
     async (userId) => {
       const results = await Promise.all([
-        supabase
-          .from("himb_account_balances")
-          .select("id, name, account_type, currency, opening_balance, current_balance")
-          .order("name")
-          .limit(100),
-        supabase
-          .from("himb_categories")
-          .select("id, name, kind, created_at")
-          .order("name")
-          .limit(100),
-        supabase
-          .from("himb_transactions")
-          .select("id, account_id, category_id, kind, amount, description, occurred_on")
-          .order("occurred_on", { ascending: false })
-          .limit(100),
-        supabase
-          .from("himb_transfers")
-          .select("id, from_account_id, to_account_id, currency, amount, description, occurred_on")
-          .order("occurred_on", { ascending: false })
-          .limit(100),
-        supabase
-          .from("himb_budgets")
-          .select("id, name, category_id, monthly_limit, period_start")
-          .order("period_start", { ascending: false })
-          .limit(100),
-        supabase
-          .from("himb_goals")
-          .select("id, name, target_amount, current_amount, target_date")
-          .order("created_at", { ascending: false })
-          .limit(100),
+        fetchAllRows(() =>
+          supabase
+            .from("himb_account_balances")
+            .select("id, name, account_type, currency, opening_balance, current_balance")
+            .order("name"),
+        ),
+        fetchAllRows(() =>
+          supabase.from("himb_categories").select("id, name, kind, created_at").order("name"),
+        ),
+        fetchAllRows(() =>
+          supabase
+            .from("himb_transactions")
+            .select("id, account_id, category_id, kind, amount, description, occurred_on")
+            .order("occurred_on", { ascending: false })
+            .order("id", { ascending: false }),
+        ),
+        fetchAllRows(() =>
+          supabase
+            .from("himb_transfers")
+            .select("id, from_account_id, to_account_id, currency, amount, description, occurred_on")
+            .order("occurred_on", { ascending: false })
+            .order("id", { ascending: false }),
+        ),
+        fetchAllRows(() =>
+          supabase
+            .from("himb_budgets")
+            .select("id, name, category_id, monthly_limit, period_start, currency")
+            .order("period_start", { ascending: false }),
+        ),
+        fetchAllRows(() =>
+          supabase
+            .from("himb_goals")
+            .select("id, name, target_amount, current_amount, target_date, currency")
+            .order("created_at", { ascending: false }),
+        ),
       ]);
-
-      const failedQuery = results.find((result) => result.error);
-      if (failedQuery) {
-        throw failedQuery.error;
-      }
 
       if (sessionRef.current?.user?.id !== userId) {
         return;
       }
 
       setData({
-        accounts: results[0].data,
-        categories: results[1].data,
-        transactions: results[2].data,
-        transfers: results[3].data,
-        budgets: results[4].data,
-        goals: results[5].data,
+        accounts: results[0],
+        categories: results[1],
+        transactions: results[2],
+        transfers: results[3],
+        budgets: results[4],
+        goals: results[5],
       });
       setLoadedForUser(userId);
       setLoadError("");
@@ -418,6 +731,9 @@ export default function FinanceApp() {
 
       saved = true;
       form.reset();
+      if (table === "himb_transactions") {
+        setTransactionEntryKind("expense");
+      }
       await loadData(userId);
       setNotice("Registro guardado.");
     } catch (error) {
@@ -473,6 +789,140 @@ export default function FinanceApp() {
     }
   }
 
+  async function updateRecord(event) {
+    event.preventDefault();
+    const userId = session?.user?.id;
+    if (!userId || !editingRecord) {
+      setActionError("No se pudo identificar el registro que quieres editar.");
+      return;
+    }
+
+    const { table, record } = editingRecord;
+    const formData = new FormData(event.currentTarget);
+    let payload;
+
+    if (table === "himb_accounts") {
+      payload = {
+        name: String(formData.get("name")).trim(),
+        opening_balance: Number(formData.get("opening_balance")),
+      };
+    } else if (table === "himb_categories") {
+      payload = { name: String(formData.get("name")).trim() };
+    } else if (table === "himb_transactions") {
+      payload = {
+        account_id: formData.get("account_id"),
+        category_id: formData.get("category_id") || null,
+        amount: Number(formData.get("amount")),
+        description: String(formData.get("description")).trim(),
+        occurred_on: formData.get("occurred_on"),
+      };
+    } else if (table === "himb_transfers") {
+      payload = {
+        amount: Number(formData.get("amount")),
+        description: String(formData.get("description")).trim(),
+        occurred_on: formData.get("occurred_on"),
+      };
+    } else if (table === "himb_budgets") {
+      payload = {
+        name: String(formData.get("name")).trim(),
+        category_id: formData.get("category_id") || null,
+        monthly_limit: Number(formData.get("monthly_limit")),
+        period_start: `${formData.get("period_start")}-01`,
+        currency: String(formData.get("currency")).toUpperCase(),
+      };
+    } else {
+      payload = {
+        name: String(formData.get("name")).trim(),
+        target_amount: Number(formData.get("target_amount")),
+        current_amount: Number(formData.get("current_amount")),
+        target_date: formData.get("target_date") || null,
+        currency: String(formData.get("currency")).toUpperCase(),
+      };
+    }
+
+    setSaving(true);
+    setActionError("");
+    setNotice("");
+    let updated = false;
+
+    try {
+      const { data: rows, error } = await supabase
+        .from(table)
+        .update(payload)
+        .eq("id", record.id)
+        .select("id");
+      if (error) {
+        throw error;
+      }
+      if (!rows.length) {
+        throw new Error("No se encontró el registro o ya no tienes permiso para editarlo.");
+      }
+
+      updated = true;
+      setEditingRecord(null);
+      await loadData(userId);
+      setNotice("Cambios guardados.");
+    } catch (error) {
+      setActionError(
+        updated
+          ? `Los cambios se guardaron, pero no se pudo actualizar la vista: ${error.message}`
+          : `No se pudieron guardar los cambios: ${error.message}`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteRecord(table, recordId, recordLabel) {
+    const cascadeWarning =
+      table === "himb_accounts"
+        ? " También se eliminarán sus movimientos y transferencias asociados."
+        : "";
+    if (!window.confirm(`¿Eliminar ${recordLabel}?${cascadeWarning} Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    const userId = session?.user?.id;
+    if (!userId) {
+      setActionError("Inicia sesión antes de eliminar datos.");
+      return;
+    }
+
+    setSaving(true);
+    setActionError("");
+    setNotice("");
+    let deleted = false;
+
+    try {
+      const { data: rows, error } = await supabase
+        .from(table)
+        .delete()
+        .eq("id", recordId)
+        .select("id");
+      if (error) {
+        throw error;
+      }
+      if (!rows.length) {
+        throw new Error("No se encontró el registro o ya no tienes permiso para eliminarlo.");
+      }
+
+      deleted = true;
+      if (editingRecord?.record?.id === recordId) {
+        setEditingRecord(null);
+      }
+      await loadData(userId);
+      setNotice("Registro eliminado.");
+    } catch (error) {
+      setActionError(
+        deleted
+          ? `El registro se eliminó, pero no se pudo actualizar la vista: ${error.message}`
+          : `No se pudo eliminar ${recordLabel}: ${error.message}`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const dataIsLoading = Boolean(session) && loadedForUser !== session.user.id;
   const now = session ? new Date() : null;
   const monthKey = now
@@ -511,6 +961,28 @@ export default function FinanceApp() {
         .reduce((total, account) => total + Number(account.current_balance), 0),
     }),
   );
+  const budgetsWithProgress = data.budgets.map((budget) => {
+    const spent = data.transactions
+    .filter((transaction) => {
+      if (
+        transaction.kind !== "expense" ||
+        transaction.occurred_on.slice(0, 7) !== budget.period_start.slice(0, 7) ||
+        (budget.category_id && transaction.category_id !== budget.category_id)
+      ) {
+        return false;
+      }
+
+      return data.accounts.find((account) => account.id === transaction.account_id)?.currency ===
+        budget.currency;
+    })
+    .reduce((total, transaction) => total + Number(transaction.amount), 0);
+
+    return {
+    ...budget,
+    spent,
+    remaining: Number(budget.monthly_limit) - spent,
+    };
+  });
   const chartMonths = now
     ? Array.from({ length: 6 }, (_, index) => {
         const month = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
@@ -603,6 +1075,11 @@ export default function FinanceApp() {
       const idOrder = left.id.localeCompare(right.id);
       return transactionOrder === "oldest" ? dateOrder || idOrder : -(dateOrder || idOrder);
     });
+  const movementPageSize = 50;
+  const movementPageCount = Math.max(1, Math.ceil(filteredTransactions.length / movementPageSize));
+  const currentMovementPage = Math.min(movementPage, movementPageCount - 1);
+  const pageStart = currentMovementPage * movementPageSize;
+  const visibleMovements = filteredTransactions.slice(pageStart, pageStart + movementPageSize);
 
   if (authLoading) {
     return (
@@ -917,7 +1394,7 @@ export default function FinanceApp() {
             ) : null}
 
             <Panel
-              description="Busca y filtra tus movimientos más recientes (hasta 100 cargados)."
+              description="Busca y filtra tu historial completo de movimientos."
               title="Movimientos"
             >
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_180px_180px]">
@@ -925,7 +1402,10 @@ export default function FinanceApp() {
                   Buscar
                   <input
                     className={FIELD_CLASS}
-                    onChange={(event) => setTransactionSearch(event.target.value)}
+                    onChange={(event) => {
+                      setTransactionSearch(event.target.value);
+                      setMovementPage(0);
+                    }}
                     placeholder="Descripción, cuenta o categoría"
                     type="search"
                     value={transactionSearch}
@@ -935,7 +1415,10 @@ export default function FinanceApp() {
                   Tipo
                   <select
                     className={FIELD_CLASS}
-                    onChange={(event) => setTransactionKindFilter(event.target.value)}
+                    onChange={(event) => {
+                      setTransactionKindFilter(event.target.value);
+                      setMovementPage(0);
+                    }}
                     value={transactionKindFilter}
                   >
                     <option value="all">Todos</option>
@@ -948,7 +1431,10 @@ export default function FinanceApp() {
                   Ordenar por fecha
                   <select
                     className={FIELD_CLASS}
-                    onChange={(event) => setTransactionOrder(event.target.value)}
+                    onChange={(event) => {
+                      setTransactionOrder(event.target.value);
+                      setMovementPage(0);
+                    }}
                     value={transactionOrder}
                   >
                     <option value="newest">Más recientes</option>
@@ -961,7 +1447,7 @@ export default function FinanceApp() {
               </p>
               {filteredTransactions.length ? (
                 <div className="mt-2 overflow-x-auto">
-                  <table className="min-w-[760px] w-full text-left text-sm">
+                  <table className="min-w-[900px] w-full text-left text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
                         <th className="px-3 py-3 font-medium" scope="col">Fecha</th>
@@ -970,10 +1456,11 @@ export default function FinanceApp() {
                         <th className="px-3 py-3 font-medium" scope="col">Cuenta</th>
                         <th className="px-3 py-3 font-medium" scope="col">Categoría</th>
                         <th className="px-3 py-3 text-right font-medium" scope="col">Importe</th>
+                        <th className="px-3 py-3 text-right font-medium" scope="col">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredTransactions.map((movement) => {
+                      {visibleMovements.map((movement) => {
                         const isTransfer = movement.movement_type === "transfer";
                         const isIncome = movement.movement_type === "income";
                         const account = isTransfer
@@ -1039,6 +1526,34 @@ export default function FinanceApp() {
                                 isTransfer ? movement.currency : account?.currency,
                               )}
                             </td>
+                            <td className="whitespace-nowrap px-3 py-3 text-right">
+                              <button
+                                className="mr-3 font-medium text-emerald-800 hover:underline"
+                                onClick={() =>
+                                  setEditingRecord({
+                                    table: isTransfer ? "himb_transfers" : "himb_transactions",
+                                    record: movement,
+                                  })
+                                }
+                                type="button"
+                              >
+                                Editar
+                              </button>
+                              <button
+                                className="font-medium text-rose-700 hover:underline"
+                                disabled={saving}
+                                onClick={() =>
+                                  deleteRecord(
+                                    isTransfer ? "himb_transfers" : "himb_transactions",
+                                    movement.id,
+                                    isTransfer ? "la transferencia" : "el movimiento",
+                                  )
+                                }
+                                type="button"
+                              >
+                                Eliminar
+                              </button>
+                            </td>
                           </tr>
                         );
                       })}
@@ -1052,6 +1567,35 @@ export default function FinanceApp() {
                     : "Aún no hay movimientos. Registra uno para empezar a ver tu actividad aquí."}
                 </EmptyState>
               )}
+              {filteredTransactions.length > movementPageSize ? (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-slate-500">
+                    Mostrando {pageStart + 1}–{Math.min(pageStart + movementPageSize, filteredTransactions.length)} de{" "}
+                    {filteredTransactions.length}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-50"
+                      disabled={currentMovementPage === 0}
+                      onClick={() => setMovementPage(currentMovementPage - 1)}
+                      type="button"
+                    >
+                      Anterior
+                    </button>
+                    <span className="self-center text-xs text-slate-500">
+                      Página {currentMovementPage + 1} de {movementPageCount}
+                    </span>
+                    <button
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-50"
+                      disabled={currentMovementPage >= movementPageCount - 1}
+                      onClick={() => setMovementPage(currentMovementPage + 1)}
+                      type="button"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </Panel>
           </div>
         ) : null}
@@ -1072,7 +1616,15 @@ export default function FinanceApp() {
                 <input className={FIELD_CLASS} maxLength={100} name="name" required />
               </FormField>
               <FormField label="Tipo">
-                <select className={FIELD_CLASS} name="kind">
+                <select
+                  className={FIELD_CLASS}
+                  name="kind"
+                  onChange={(event) => {
+                    setTransactionEntryKind(event.target.value);
+                    event.currentTarget.form.elements.category_id.value = "";
+                  }}
+                  value={transactionEntryKind}
+                >
                   <option value="expense">Gasto</option>
                   <option value="income">Ingreso</option>
                 </select>
@@ -1084,10 +1636,31 @@ export default function FinanceApp() {
             {data.categories.length ? (
               <ul className="mt-4 divide-y divide-slate-100">
                 {data.categories.map((category) => (
-                  <li className="flex justify-between py-2 text-sm" key={category.id}>
-                    <span className="font-medium text-slate-800">{category.name}</span>
-                    <span className="text-slate-500">
-                      {category.kind === "income" ? "Ingreso" : "Gasto"}
+                  <li className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm" key={category.id}>
+                    <span>
+                      <span className="font-medium text-slate-800">{category.name}</span>
+                      <span className="ml-2 text-slate-500">
+                        {category.kind === "income" ? "Ingreso" : "Gasto"}
+                      </span>
+                    </span>
+                    <span className="flex gap-3">
+                      <button
+                        className="font-medium text-emerald-800 hover:underline"
+                        onClick={() => setEditingRecord({ table: "himb_categories", record: category })}
+                        type="button"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="font-medium text-rose-700 hover:underline"
+                        disabled={saving}
+                        onClick={() =>
+                          deleteRecord("himb_categories", category.id, `la categoría "${category.name}"`)
+                        }
+                        type="button"
+                      >
+                        Eliminar
+                      </button>
                     </span>
                   </li>
                 ))}
@@ -1161,13 +1734,32 @@ export default function FinanceApp() {
             {data.accounts.length ? (
               <ul className="mt-4 divide-y divide-slate-100">
                 {data.accounts.map((account) => (
-                  <li className="flex justify-between gap-3 py-2 text-sm" key={account.id}>
+                  <li className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm" key={account.id}>
                     <span className="font-medium text-slate-800">{account.name}</span>
-                    <span className="text-right">
-                      <span className="block text-xs text-slate-500">Saldo actual</span>
-                      <span className="font-medium text-slate-800">
-                        {formatMoney(account.current_balance, account.currency)}
+                    <span className="flex items-center gap-4">
+                      <span className="text-right">
+                        <span className="block text-xs text-slate-500">Saldo actual</span>
+                        <span className="font-medium text-slate-800">
+                          {formatMoney(account.current_balance, account.currency)}
+                        </span>
                       </span>
+                      <button
+                        className="font-medium text-emerald-800 hover:underline"
+                        onClick={() => setEditingRecord({ table: "himb_accounts", record: account })}
+                        type="button"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="font-medium text-rose-700 hover:underline"
+                        disabled={saving}
+                        onClick={() =>
+                          deleteRecord("himb_accounts", account.id, `la cuenta "${account.name}"`)
+                        }
+                        type="button"
+                      >
+                        Eliminar
+                      </button>
                     </span>
                   </li>
                 ))}
@@ -1224,11 +1816,13 @@ export default function FinanceApp() {
                 <FormField label="Categoría (opcional)">
                   <select className={FIELD_CLASS} name="category_id">
                     <option value="">Sin categoría</option>
-                    {data.categories.map((category) => (
+                    {data.categories
+                      .filter((category) => category.kind === transactionEntryKind)
+                      .map((category) => (
                       <option key={category.id} value={category.id}>
                         {category.name}
                       </option>
-                    ))}
+                      ))}
                   </select>
                 </FormField>
                 <FormField label="Fecha">
@@ -1411,6 +2005,7 @@ export default function FinanceApp() {
                   name: String(form.get("name")).trim(),
                   category_id: form.get("category_id") || null,
                   monthly_limit: Number(form.get("monthly_limit")),
+                  currency: String(form.get("currency")).toUpperCase(),
                   period_start: `${form.get("period_start")}-01`,
                 }))
               }
@@ -1449,22 +2044,68 @@ export default function FinanceApp() {
                   type="month"
                 />
               </FormField>
+              <FormField label="Moneda">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={data.accounts[0]?.currency ?? "BRL"}
+                  maxLength={3}
+                  minLength={3}
+                  name="currency"
+                  pattern="[A-Za-z]{3}"
+                  required
+                />
+              </FormField>
               <button className={`${BUTTON_CLASS} sm:col-span-2`} disabled={saving} type="submit">
                 Crear presupuesto
               </button>
             </form>
-            {data.budgets.length ? (
+            {budgetsWithProgress.length ? (
               <ul className="mt-4 divide-y divide-slate-100">
-                {data.budgets.map((budget) => (
-                  <li className="flex justify-between gap-3 py-2 text-sm" key={budget.id}>
-                    <span className="font-medium text-slate-800">
-                      {budget.name}
-                      <span className="ml-2 font-normal text-slate-500">
+                {budgetsWithProgress.map((budget) => (
+                  <li className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm" key={budget.id}>
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-800">
+                        {budget.name}
+                        <span className="ml-2 font-normal text-slate-500">
                         {CategoryName({ categoryId: budget.category_id, categories: data.categories })} ·{" "}
                         {formatDate(budget.period_start)}
-                      </span>
+                        </span>
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Gastado {formatMoney(budget.spent, budget.currency)} de{" "}
+                        {formatMoney(budget.monthly_limit, budget.currency)}
+                        {" · "}
+                        <span
+                          className={
+                            budget.remaining < 0
+                              ? "font-medium text-rose-700"
+                              : "font-medium text-emerald-700"
+                          }
+                        >
+                          {budget.remaining < 0 ? "Excedido " : "Disponible "}
+                          {formatMoney(Math.abs(budget.remaining), budget.currency)}
+                        </span>
+                      </p>
+                    </div>
+                    <span className="flex gap-3">
+                      <button
+                        className="font-medium text-emerald-800 hover:underline"
+                        onClick={() => setEditingRecord({ table: "himb_budgets", record: budget })}
+                        type="button"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="font-medium text-rose-700 hover:underline"
+                        disabled={saving}
+                        onClick={() =>
+                          deleteRecord("himb_budgets", budget.id, `el presupuesto "${budget.name}"`)
+                        }
+                        type="button"
+                      >
+                        Eliminar
+                      </button>
                     </span>
-                    <span className="text-slate-600">{formatMoney(budget.monthly_limit)}</span>
                   </li>
                 ))}
               </ul>
@@ -1481,6 +2122,7 @@ export default function FinanceApp() {
                   name: String(form.get("name")).trim(),
                   target_amount: Number(form.get("target_amount")),
                   current_amount: Number(form.get("current_amount") || 0),
+                  currency: String(form.get("currency")).toUpperCase(),
                   target_date: form.get("target_date") || null,
                 }))
               }
@@ -1512,6 +2154,17 @@ export default function FinanceApp() {
                   type="number"
                 />
               </FormField>
+              <FormField label="Moneda">
+                <input
+                  className={FIELD_CLASS}
+                  defaultValue={data.accounts[0]?.currency ?? "BRL"}
+                  maxLength={3}
+                  minLength={3}
+                  name="currency"
+                  pattern="[A-Za-z]{3}"
+                  required
+                />
+              </FormField>
               <button className={`${BUTTON_CLASS} sm:col-span-2`} disabled={saving} type="submit">
                 Crear meta
               </button>
@@ -1519,15 +2172,35 @@ export default function FinanceApp() {
             {data.goals.length ? (
               <ul className="mt-4 divide-y divide-slate-100">
                 {data.goals.map((goal) => (
-                  <li className="flex justify-between gap-3 py-2 text-sm" key={goal.id}>
-                    <span className="font-medium text-slate-800">
-                      {goal.name}
-                      <span className="ml-2 font-normal text-slate-500">
-                        {goal.target_date ? `Hasta ${formatDate(goal.target_date)}` : "Sin fecha objetivo"}
-                      </span>
-                    </span>
-                    <span className="text-slate-600">
-                      {formatMoney(goal.current_amount)} / {formatMoney(goal.target_amount)}
+                  <li className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm" key={goal.id}>
+                    <div>
+                      <p className="font-medium text-slate-800">
+                        {goal.name}
+                        <span className="ml-2 font-normal text-slate-500">
+                          {goal.target_date ? `Hasta ${formatDate(goal.target_date)}` : "Sin fecha objetivo"}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-slate-600">
+                        {formatMoney(goal.current_amount, goal.currency)} /{" "}
+                        {formatMoney(goal.target_amount, goal.currency)}
+                      </p>
+                    </div>
+                    <span className="flex gap-3">
+                      <button
+                        className="font-medium text-emerald-800 hover:underline"
+                        onClick={() => setEditingRecord({ table: "himb_goals", record: goal })}
+                        type="button"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="font-medium text-rose-700 hover:underline"
+                        disabled={saving}
+                        onClick={() => deleteRecord("himb_goals", goal.id, `la meta "${goal.name}"`)}
+                        type="button"
+                      >
+                        Eliminar
+                      </button>
                     </span>
                   </li>
                 ))}
@@ -1540,6 +2213,17 @@ export default function FinanceApp() {
         ) : null}
         </div>
       </div>
+      {editingRecord ? (
+        <EditRecordDialog
+          accounts={data.accounts}
+          categories={data.categories}
+          entry={editingRecord}
+          error={actionError}
+          saving={saving}
+          onClose={() => setEditingRecord(null)}
+          onSubmit={updateRecord}
+        />
+      ) : null}
     </main>
   );
 }
