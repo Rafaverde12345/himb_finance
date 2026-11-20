@@ -80,6 +80,112 @@ function AccountName({ accountId, accounts }) {
   return accounts.find((account) => account.id === accountId)?.name ?? "Cuenta no disponible";
 }
 
+function MonthlyCashFlowChart({ currency, months }) {
+  const left = 58;
+  const top = 14;
+  const chartWidth = 430;
+  const chartHeight = 145;
+  const baseline = top + chartHeight;
+  const maxValue = Math.max(0, ...months.flatMap((month) => [month.income, month.expenses]));
+  const scale = maxValue || 1;
+  const groupWidth = chartWidth / months.length;
+  const barWidth = 17;
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap gap-4 text-xs text-slate-600" aria-label="Leyenda">
+        <span className="inline-flex items-center gap-2">
+          <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-emerald-600" />
+          Ingresos
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-rose-500" />
+          Gastos
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <svg
+          aria-label={`Ingresos y gastos de los últimos seis meses en ${currency}`}
+          className="h-auto min-w-[520px] w-full"
+          role="img"
+          viewBox="0 0 520 205"
+        >
+          <title>Ingresos y gastos mensuales en {currency}</title>
+          {Array.from({ length: 5 }, (_, index) => {
+            const value = (scale / 4) * (4 - index);
+            const y = top + (chartHeight / 4) * index;
+
+            return (
+              <g key={index}>
+                <line
+                  className="stroke-slate-200"
+                  x1={left}
+                  x2={left + chartWidth}
+                  y1={y}
+                  y2={y}
+                />
+                <text
+                  className="fill-slate-500 text-[10px]"
+                  textAnchor="end"
+                  x={left - 8}
+                  y={y + 3}
+                >
+                  {new Intl.NumberFormat("es", {
+                    notation: "compact",
+                    maximumFractionDigits: 1,
+                  }).format(value)}
+                </text>
+              </g>
+            );
+          })}
+          {months.map((month, index) => {
+            const center = left + groupWidth * index + groupWidth / 2;
+            const incomeHeight = (month.income / scale) * chartHeight;
+            const expenseHeight = (month.expenses / scale) * chartHeight;
+
+            return (
+              <g key={month.key}>
+                <rect
+                  fill="#059669"
+                  height={incomeHeight}
+                  rx="3"
+                  width={barWidth}
+                  x={center - barWidth - 2}
+                  y={baseline - incomeHeight}
+                >
+                  <title>
+                    {month.label}: ingresos {formatMoney(month.income, currency)}
+                  </title>
+                </rect>
+                <rect
+                  fill="#f43f5e"
+                  height={expenseHeight}
+                  rx="3"
+                  width={barWidth}
+                  x={center + 2}
+                  y={baseline - expenseHeight}
+                >
+                  <title>
+                    {month.label}: gastos {formatMoney(month.expenses, currency)}
+                  </title>
+                </rect>
+                <text
+                  className="fill-slate-600 text-[10px]"
+                  textAnchor="middle"
+                  x={center}
+                  y={baseline + 18}
+                >
+                  {month.label}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 export default function FinanceApp() {
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const sessionRef = useRef(null);
@@ -96,6 +202,9 @@ export default function FinanceApp() {
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
   const [activeView, setActiveView] = useState("overview");
+  const [transactionSearch, setTransactionSearch] = useState("");
+  const [transactionKindFilter, setTransactionKindFilter] = useState("all");
+  const [transactionOrder, setTransactionOrder] = useState("newest");
 
   const loadData = useCallback(
     async (userId) => {
@@ -329,6 +438,70 @@ export default function FinanceApp() {
       };
     },
   );
+  const chartMonths = now
+    ? Array.from({ length: 6 }, (_, index) => {
+        const month = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
+        const key = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+
+        return {
+          key,
+          label: month.toLocaleDateString("es", { month: "short" }),
+          income: 0,
+          expenses: 0,
+        };
+      })
+    : [];
+  const cashFlowByCurrency = [...new Set(data.accounts.map((account) => account.currency))].map(
+    (currency) => {
+      const accountIds = new Set(
+        data.accounts
+          .filter((account) => account.currency === currency)
+          .map((account) => account.id),
+      );
+      const months = chartMonths.map((month) => {
+        const transactions = data.transactions.filter(
+          (transaction) =>
+            accountIds.has(transaction.account_id) &&
+            transaction.occurred_on.startsWith(month.key),
+        );
+
+        return {
+          ...month,
+          income: transactions
+            .filter((transaction) => transaction.kind === "income")
+            .reduce((total, transaction) => total + Number(transaction.amount), 0),
+          expenses: transactions
+            .filter((transaction) => transaction.kind === "expense")
+            .reduce((total, transaction) => total + Number(transaction.amount), 0),
+        };
+      });
+
+      return { currency, months };
+    },
+  );
+  const searchTerm = transactionSearch.trim().toLocaleLowerCase("es");
+  const filteredTransactions = data.transactions
+    .filter((transaction) => {
+      if (transactionKindFilter !== "all" && transaction.kind !== transactionKindFilter) {
+        return false;
+      }
+
+      const searchableText = [
+        transaction.description,
+        AccountName({ accountId: transaction.account_id, accounts: data.accounts }),
+        CategoryName({ categoryId: transaction.category_id, categories: data.categories }),
+        transaction.kind === "income" ? "ingreso" : "gasto",
+      ]
+        .join(" ")
+        .toLocaleLowerCase("es");
+
+      return !searchTerm || searchableText.includes(searchTerm);
+    })
+    .sort((left, right) => {
+      const dateOrder = left.occurred_on.localeCompare(right.occurred_on);
+      const idOrder = left.id.localeCompare(right.id);
+      return transactionOrder === "oldest" ? dateOrder || idOrder : -(dateOrder || idOrder);
+    });
 
   if (authLoading) {
     return (
@@ -564,6 +737,38 @@ export default function FinanceApp() {
               </Panel>
             </section>
 
+            <Panel
+              description="Comparación mensual de entradas y salidas por moneda, sin mezclar valores."
+              title="Flujo de caja de los últimos 6 meses"
+            >
+              {cashFlowByCurrency.length ? (
+                <div className="grid gap-6 xl:grid-cols-2">
+                  {cashFlowByCurrency.map(({ currency, months }) => {
+                    const hasActivity = months.some((month) => month.income || month.expenses);
+
+                    return (
+                      <section
+                        aria-label={`Flujo de caja en ${currency}`}
+                        className="min-w-0 rounded-xl border border-slate-100 p-4"
+                        key={currency}
+                      >
+                        <h3 className="mb-2 text-sm font-semibold text-slate-800">{currency}</h3>
+                        {hasActivity ? (
+                          <MonthlyCashFlowChart currency={currency} months={months} />
+                        ) : (
+                          <EmptyState>
+                            No hay movimientos en los últimos seis meses para esta moneda.
+                          </EmptyState>
+                        )}
+                      </section>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyState>Agrega una cuenta para visualizar ingresos y gastos por mes.</EmptyState>
+              )}
+            </Panel>
+
             {data.accounts.length === 0 || data.categories.length === 0 ? (
               <Panel
                 description="Completa estos pasos para que tu resumen tenga información útil."
@@ -591,55 +796,116 @@ export default function FinanceApp() {
             ) : null}
 
             <Panel
-              description="Los movimientos más recientes que has registrado."
-              title="Actividad reciente"
+              description="Busca y filtra tus movimientos más recientes (hasta 100 cargados)."
+              title="Movimientos"
             >
-              {data.transactions.length ? (
-                <ul className="divide-y divide-slate-100">
-                  {data.transactions.slice(0, 5).map((transaction) => (
-                    <li
-                      className="flex flex-wrap items-center justify-between gap-2 py-3"
-                      key={transaction.id}
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-slate-900">
-                          {transaction.description ||
-                            (transaction.kind === "income" ? "Ingreso" : "Gasto")}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {formatDate(transaction.occurred_on)} ·{" "}
-                          {AccountName({ accountId: transaction.account_id, accounts: data.accounts })} ·{" "}
-                          {CategoryName({ categoryId: transaction.category_id, categories: data.categories })}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-sm font-semibold ${
-                          transaction.kind === "income" ? "text-emerald-700" : "text-slate-800"
-                        }`}
-                      >
-                        {transaction.kind === "income" ? "+" : "−"}
-                        {formatMoney(
-                          transaction.amount,
-                          data.accounts.find((account) => account.id === transaction.account_id)?.currency,
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_180px_180px]">
+                <label className="block text-sm font-medium text-slate-700">
+                  Buscar
+                  <input
+                    className={FIELD_CLASS}
+                    onChange={(event) => setTransactionSearch(event.target.value)}
+                    placeholder="Descripción, cuenta o categoría"
+                    type="search"
+                    value={transactionSearch}
+                  />
+                </label>
+                <label className="block text-sm font-medium text-slate-700">
+                  Tipo
+                  <select
+                    className={FIELD_CLASS}
+                    onChange={(event) => setTransactionKindFilter(event.target.value)}
+                    value={transactionKindFilter}
+                  >
+                    <option value="all">Todos</option>
+                    <option value="income">Ingresos</option>
+                    <option value="expense">Gastos</option>
+                  </select>
+                </label>
+                <label className="block text-sm font-medium text-slate-700">
+                  Ordenar por fecha
+                  <select
+                    className={FIELD_CLASS}
+                    onChange={(event) => setTransactionOrder(event.target.value)}
+                    value={transactionOrder}
+                  >
+                    <option value="newest">Más recientes</option>
+                    <option value="oldest">Más antiguos</option>
+                  </select>
+                </label>
+              </div>
+              <p aria-live="polite" className="mt-4 text-xs text-slate-500">
+                {filteredTransactions.length} de {data.transactions.length} movimientos
+              </p>
+              {filteredTransactions.length ? (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="min-w-[760px] w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-3 py-3 font-medium" scope="col">Fecha</th>
+                        <th className="px-3 py-3 font-medium" scope="col">Tipo</th>
+                        <th className="px-3 py-3 font-medium" scope="col">Descripción</th>
+                        <th className="px-3 py-3 font-medium" scope="col">Cuenta</th>
+                        <th className="px-3 py-3 font-medium" scope="col">Categoría</th>
+                        <th className="px-3 py-3 text-right font-medium" scope="col">Importe</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredTransactions.map((transaction) => {
+                        const account = data.accounts.find(
+                          (item) => item.id === transaction.account_id,
+                        );
+
+                        return (
+                          <tr className="hover:bg-slate-50" key={transaction.id}>
+                            <td className="whitespace-nowrap px-3 py-3 text-slate-600">
+                              {formatDate(transaction.occurred_on)}
+                            </td>
+                            <td className="px-3 py-3">
+                              <span
+                                className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                                  transaction.kind === "income"
+                                    ? "bg-emerald-50 text-emerald-800"
+                                    : "bg-rose-50 text-rose-800"
+                                }`}
+                              >
+                                {transaction.kind === "income" ? "Ingreso" : "Gasto"}
+                              </span>
+                            </td>
+                            <td className="max-w-56 truncate px-3 py-3 font-medium text-slate-900">
+                              {transaction.description ||
+                                (transaction.kind === "income" ? "Ingreso" : "Gasto")}
+                            </td>
+                            <td className="px-3 py-3 text-slate-600">{account?.name ?? "Cuenta no disponible"}</td>
+                            <td className="px-3 py-3 text-slate-600">
+                              {CategoryName({
+                                categoryId: transaction.category_id,
+                                categories: data.categories,
+                              })}
+                            </td>
+                            <td
+                              className={`whitespace-nowrap px-3 py-3 text-right font-semibold ${
+                                transaction.kind === "income"
+                                  ? "text-emerald-700"
+                                  : "text-slate-800"
+                              }`}
+                            >
+                              {transaction.kind === "income" ? "+" : "−"}
+                              {formatMoney(transaction.amount, account?.currency)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <EmptyState>
-                  Aún no hay movimientos. Registra uno para empezar a ver tu actividad aquí.
+                  {data.transactions.length
+                    ? "No hay movimientos que coincidan. Prueba cambiar la búsqueda o los filtros."
+                    : "Aún no hay movimientos. Registra uno para empezar a ver tu actividad aquí."}
                 </EmptyState>
               )}
-              {data.transactions.length ? (
-                <button
-                  className="mt-3 text-sm font-semibold text-emerald-800 hover:underline"
-                  onClick={() => setActiveView("activity")}
-                  type="button"
-                >
-                  Ver todos los movimientos
-                </button>
-              ) : null}
             </Panel>
           </div>
         ) : null}
