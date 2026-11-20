@@ -45,15 +45,20 @@ permitir que el usuario defina una nueva contraseña.
 ## Saldos y transferencias
 
 Antes de usar saldos calculados o transferencias, aplica
-`supabase/migrations/20261119212100_himb_transfers_and_account_balances.sql`
-al proyecto de HIMB desde Supabase. La migracion agrega transferencias entre
-cuentas de la misma moneda y una vista protegida para calcular el saldo actual.
+las migraciones `20261119212100_himb_transfers_and_account_balances.sql` y
+`20261119213000_himb_budget_goal_currencies.sql`, en ese orden, al proyecto de
+HIMB desde Supabase. Agregan transferencias entre cuentas de la misma moneda,
+una vista protegida para calcular saldos y monedas propias para presupuestos y
+metas.
 
 El saldo de cada cuenta es el saldo inicial, mas ingresos, menos gastos, mas
 transferencias recibidas, menos transferencias enviadas. En cuentas de credito,
 una deuda inicial debe registrarse como negativa; los gastos aumentan la deuda
 y los pagos la reducen. Las transferencias no cuentan como ingreso ni como
 gasto, y las conversiones entre monedas aun no estan soportadas.
+
+Los movimientos se leen en paginas de 1.000 filas hasta completar el historial
+del usuario, para que los saldos y graficos no se limiten a una muestra parcial.
 
 ## Datos financieros
 

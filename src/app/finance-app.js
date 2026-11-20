@@ -275,11 +275,17 @@ function EditRecordDialog({ entry, accounts, categories, error, saving, onClose,
             <>
               <FormField label="Cuenta">
                 <select className={FIELD_CLASS} defaultValue={record.account_id} name="account_id" required>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name} · {account.currency}
-                    </option>
-                  ))}
+                  {accounts
+                    .filter(
+                      (account) =>
+                        account.currency ===
+                        accounts.find((item) => item.id === record.account_id)?.currency,
+                    )
+                    .map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name} · {account.currency}
+                      </option>
+                    ))}
                 </select>
               </FormField>
               <FormField label="Categoría">
@@ -418,6 +424,9 @@ function EditRecordDialog({ entry, accounts, categories, error, saving, onClose,
                   required
                 />
               </FormField>
+              <p className="text-xs text-slate-500 sm:col-span-2">
+                Cambiar la moneda no convierte los importes existentes.
+              </p>
             </>
           ) : null}
           {table === "himb_goals" ? (
@@ -472,6 +481,9 @@ function EditRecordDialog({ entry, accounts, categories, error, saving, onClose,
                   required
                 />
               </FormField>
+              <p className="text-xs text-slate-500 sm:col-span-2">
+                Cambiar la moneda no convierte los importes existentes.
+              </p>
             </>
           ) : null}
           {error ? (
@@ -789,6 +801,11 @@ export default function FinanceApp() {
     }
   }
 
+  function openEditRecord(table, record) {
+    setActionError("");
+    setEditingRecord({ table, record });
+  }
+
   async function updateRecord(event) {
     event.preventDefault();
     const userId = session?.user?.id;
@@ -854,7 +871,7 @@ export default function FinanceApp() {
       if (error) {
         throw error;
       }
-      if (!rows.length) {
+      if (!rows?.length) {
         throw new Error("No se encontró el registro o ya no tienes permiso para editarlo.");
       }
 
@@ -902,12 +919,12 @@ export default function FinanceApp() {
       if (error) {
         throw error;
       }
-      if (!rows.length) {
+      if (!rows?.length) {
         throw new Error("No se encontró el registro o ya no tienes permiso para eliminarlo.");
       }
 
       deleted = true;
-      if (editingRecord?.record?.id === recordId) {
+      if (editingRecord?.table === table && editingRecord.record.id === recordId) {
         setEditingRecord(null);
       }
       await loadData(userId);
@@ -1530,10 +1547,10 @@ export default function FinanceApp() {
                               <button
                                 className="mr-3 font-medium text-emerald-800 hover:underline"
                                 onClick={() =>
-                                  setEditingRecord({
-                                    table: isTransfer ? "himb_transfers" : "himb_transactions",
-                                    record: movement,
-                                  })
+                                  openEditRecord(
+                                    isTransfer ? "himb_transfers" : "himb_transactions",
+                                    movement,
+                                  )
                                 }
                                 type="button"
                               >
@@ -1646,7 +1663,7 @@ export default function FinanceApp() {
                     <span className="flex gap-3">
                       <button
                         className="font-medium text-emerald-800 hover:underline"
-                        onClick={() => setEditingRecord({ table: "himb_categories", record: category })}
+                        onClick={() => openEditRecord("himb_categories", category)}
                         type="button"
                       >
                         Editar
@@ -1745,7 +1762,7 @@ export default function FinanceApp() {
                       </span>
                       <button
                         className="font-medium text-emerald-800 hover:underline"
-                        onClick={() => setEditingRecord({ table: "himb_accounts", record: account })}
+                        onClick={() => openEditRecord("himb_accounts", account)}
                         type="button"
                       >
                         Editar
@@ -2090,7 +2107,7 @@ export default function FinanceApp() {
                     <span className="flex gap-3">
                       <button
                         className="font-medium text-emerald-800 hover:underline"
-                        onClick={() => setEditingRecord({ table: "himb_budgets", record: budget })}
+                        onClick={() => openEditRecord("himb_budgets", budget)}
                         type="button"
                       >
                         Editar
@@ -2188,7 +2205,7 @@ export default function FinanceApp() {
                     <span className="flex gap-3">
                       <button
                         className="font-medium text-emerald-800 hover:underline"
-                        onClick={() => setEditingRecord({ table: "himb_goals", record: goal })}
+                        onClick={() => openEditRecord("himb_goals", goal)}
                         type="button"
                       >
                         Editar
