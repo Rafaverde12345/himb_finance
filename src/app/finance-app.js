@@ -212,6 +212,21 @@ export default function FinanceApp() {
     setNotice("");
 
     try {
+      if (authMode === "recovery-request") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+
+        if (error) {
+          throw error;
+        }
+
+        setNotice(
+          "Si existe una cuenta con ese correo, recibirás un enlace para cambiar tu contraseña.",
+        );
+        return;
+      }
+
       const result =
         authMode === "signup"
           ? await supabase.auth.signUp({ email, password })
@@ -331,10 +346,14 @@ export default function FinanceApp() {
             HIMB
           </p>
           <h1 className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">
-            Tu espacio financiero
+            {authMode === "recovery-request"
+              ? "Recupera tu contraseña"
+              : "Tu espacio financiero"}
           </h1>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Inicia sesión para consultar y guardar tu información financiera.
+            {authMode === "recovery-request"
+              ? "Te enviaremos instrucciones para crear una contraseña nueva."
+              : "Inicia sesión para consultar y guardar tu información financiera."}
           </p>
 
           {loadError ? (
@@ -354,17 +373,19 @@ export default function FinanceApp() {
                 value={email}
               />
             </FormField>
-            <FormField label="Contraseña">
-              <input
-                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
-                className={FIELD_CLASS}
-                minLength={8}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                type="password"
-                value={password}
-              />
-            </FormField>
+            {authMode !== "recovery-request" ? (
+              <FormField label="Contraseña">
+                <input
+                  autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+                  className={FIELD_CLASS}
+                  minLength={8}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  type="password"
+                  value={password}
+                />
+              </FormField>
+            ) : null}
             {actionError ? (
               <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
                 {actionError}
@@ -384,20 +405,48 @@ export default function FinanceApp() {
             </button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-slate-600">
-            {authMode === "signup" ? "¿Ya tienes cuenta?" : "¿Primera vez en HIMB?"}{" "}
+          {authMode === "signin" ? (
             <button
-              className="font-semibold text-emerald-800 underline-offset-4 hover:underline"
+              className="mt-4 block w-full text-center text-sm font-medium text-emerald-800 hover:underline"
               onClick={() => {
-                setAuthMode(authMode === "signup" ? "signin" : "signup");
+                setAuthMode("recovery-request");
                 setActionError("");
                 setNotice("");
               }}
               type="button"
             >
-              {authMode === "signup" ? "Inicia sesión" : "Crear cuenta"}
+              Olvidé mi contraseña
             </button>
-          </p>
+          ) : null}
+          {authMode !== "recovery-request" ? (
+            <p className="mt-5 text-center text-sm text-slate-600">
+              {authMode === "signup" ? "¿Ya tienes cuenta?" : "¿Primera vez en HIMB?"}{" "}
+              <button
+                className="font-semibold text-emerald-800 underline-offset-4 hover:underline"
+                onClick={() => {
+                  setAuthMode(authMode === "signup" ? "signin" : "signup");
+                  setActionError("");
+                  setNotice("");
+                }}
+                type="button"
+              >
+                {authMode === "signup" ? "Inicia sesión" : "Crear cuenta"}
+              </button>
+            </p>
+          ) : null}
+          {authMode === "recovery-request" ? (
+            <button
+              className="mt-3 block w-full text-center text-sm text-slate-600 hover:text-slate-900"
+              onClick={() => {
+                setAuthMode("signin");
+                setActionError("");
+                setNotice("");
+              }}
+              type="button"
+            >
+              Volver a iniciar sesión
+            </button>
+          ) : null}
         </section>
       </main>
     );

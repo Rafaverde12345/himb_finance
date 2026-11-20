@@ -31,6 +31,17 @@ Las variables publicas de Supabase se encuentran documentadas en
 `.env.local.example`. Las claves privadas nunca deben agregarse a variables
 que comiencen con `NEXT_PUBLIC_`.
 
+## Recuperacion de contraseña
+
+En Supabase, agrega las URLs de redireccion de HIMB en **Authentication >
+URL Configuration > Redirect URLs**:
+
+- `http://localhost:3000/reset-password` para desarrollo local.
+- La URL equivalente del dominio de produccion al publicar la aplicacion.
+
+El correo de recuperacion usa esa ruta para establecer una sesion temporal y
+permitir que el usuario defina una nueva contraseña.
+
 ## Datos financieros
 
 HIMB usa autenticacion por correo y contrasena. Las tablas de cuentas,
