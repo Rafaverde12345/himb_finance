@@ -71,3 +71,7 @@ Cada usuario autenticado solo puede consultar y modificar sus propios registros.
 compartirse ni subirse al repositorio. Para publicar la aplicacion, configura
 `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` tambien en
 el proveedor de hosting.
+
+
+
+himbfinance.vercel.app
