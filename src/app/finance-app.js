@@ -29,6 +29,7 @@ const ACCOUNT_TYPES = [
 
 const NAV_ITEMS = [
   ["overview", "Resumen", "Vista general"],
+  ["analysis", "Análisis", "Gráficas por período"],
   ["activity", "Movimientos", "Ingresos y gastos"],
   ["accounts", "Cuentas", "Saldos y medios"],
   ["planning", "Planificación", "Presupuestos y metas"],
@@ -201,6 +202,391 @@ function MonthlyCashFlowChart({ currency, months }) {
         </svg>
       </div>
     </div>
+  );
+}
+
+function FinanceBoardCard({
+  children,
+  currency,
+  dark,
+  id,
+  onDragStart,
+  position,
+  title,
+  total,
+  tone,
+}) {
+  const styles = {
+    income: dark
+      ? "border-[#34d27b] text-[#34d27b]"
+      : "border-[#15924a] text-[#15924a]",
+    expense: dark ? "border-[#ff5a5a] text-[#ff5a5a]" : "border-[#d33a3a] text-[#d33a3a]",
+    wealth: dark ? "border-[#3bb0ff] text-[#1976d2]" : "border-[#1976d2] text-[#1976d2]",
+  };
+
+  return (
+    <section
+      className={`absolute flex max-h-[440px] w-[340px] flex-col overflow-hidden rounded-[10px] border shadow-[0_6px_20px_rgba(0,0,0,.12)] ${
+        dark ? "border-[#34363c] bg-[#27282c] text-[#e9eaee] shadow-black/50" : "border-[#cfd4de] bg-white text-[#1f2430]"
+      }`}
+      data-board-card
+      style={{ left: position.x, top: position.y }}
+    >
+      <header
+        className={`flex cursor-grab touch-none items-center gap-2 border-b-2 px-3 py-2 active:cursor-grabbing ${
+          dark ? "border-[#34363c] bg-[#1e1f22]" : "border-[#cfd4de] bg-[#f4f5f8]"
+        }`}
+        onPointerDown={(event) => onDragStart(id, event)}
+        style={{ borderBottomColor: tone }}
+      >
+        <span aria-hidden="true" className="text-xl text-slate-400">⠿</span>
+        <h2 className={`min-w-0 flex-1 truncate text-sm font-bold ${styles[id]}`}>
+          {title}
+        </h2>
+        <strong className={`whitespace-nowrap text-sm tabular-nums ${styles[id]}`}>
+          {formatMoney(total, currency)}
+        </strong>
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function FinanceBoard({
+  currency,
+  endDateLabel,
+  expenses,
+  income,
+  periodLabel,
+  wealthAccounts,
+}) {
+  const [camera, setCamera] = useState({ x: 0, y: 0, scale: 0.9 });
+  const [positions, setPositions] = useState({
+    income: { x: 32, y: 32 },
+    expense: { x: 32, y: 490 },
+    wealth: { x: 408, y: 32 },
+  });
+  const [expandedGroups, setExpandedGroups] = useState({});
+  const [dark, setDark] = useState(false);
+  const viewportRef = useRef(null);
+  const dragRef = useRef(null);
+
+  useEffect(() => {
+    const handlePointerMove = (event) => {
+      const drag = dragRef.current;
+      if (!drag) {
+        return;
+      }
+
+      if (drag.kind === "card") {
+        setPositions((current) => ({
+          ...current,
+          [drag.id]: {
+            x: drag.position.x + (event.clientX - drag.startX) / camera.scale,
+            y: drag.position.y + (event.clientY - drag.startY) / camera.scale,
+          },
+        }));
+      } else {
+        setCamera((current) => ({
+          ...current,
+          x: drag.camera.x + event.clientX - drag.startX,
+          y: drag.camera.y + event.clientY - drag.startY,
+        }));
+      }
+    };
+    const stopDragging = () => {
+      dragRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
+  }, [camera.scale]);
+
+  const beginCardDrag = (id, event) => {
+    event.preventDefault();
+    dragRef.current = {
+      kind: "card",
+      id,
+      startX: event.clientX,
+      startY: event.clientY,
+      position: positions[id],
+    };
+  };
+  const beginCanvasPan = (event) => {
+    if (event.target.closest("[data-board-card]") || !event.target.closest("[data-board-pan-area]")) {
+      return;
+    }
+
+    dragRef.current = {
+      kind: "canvas",
+      startX: event.clientX,
+      startY: event.clientY,
+      camera,
+    };
+  };
+  const zoomBy = (factor) => {
+    const viewport = viewportRef.current;
+    setCamera((current) => {
+      const scale = Math.min(1.5, Math.max(0.45, current.scale * factor));
+      const ratio = scale / current.scale;
+      const centerX = (viewport?.clientWidth ?? 0) / 2;
+      const centerY = (viewport?.clientHeight ?? 0) / 2;
+      return {
+        x: centerX - (centerX - current.x) * ratio,
+        y: centerY - (centerY - current.y) * ratio,
+        scale,
+      };
+    });
+  };
+  const toggleGroup = (groupId) => {
+    setExpandedGroups((current) => ({
+      ...current,
+      [groupId]: !(current[groupId] ?? true),
+    }));
+  };
+  const netWorth = wealthAccounts.reduce((total, account) => total + account.amount, 0);
+  const assetAccounts = wealthAccounts.filter((account) => account.account_type !== "credit");
+  const liabilityAccounts = wealthAccounts.filter((account) => account.account_type === "credit");
+  const assetTotal = assetAccounts.reduce((total, account) => total + account.amount, 0);
+  const liabilityTotal = -liabilityAccounts.reduce((total, account) => total + account.amount, 0);
+  const background = dark ? "#17181b" : "#eef0f4";
+  const dots = dark ? "#34363c" : "#cfd4de";
+  const muted = dark ? "text-[#8b909b]" : "text-[#7b8394]";
+  const border = dark ? "border-[#34363c]" : "border-[#cfd4de]";
+  const groupBackground = dark ? "bg-[#1e1f22]" : "bg-[#f4f5f8]";
+
+  const renderCashFlowGroups = (groups, kind) => {
+    if (!groups.length) {
+      return (
+        <p className={`px-4 py-6 text-center text-sm ${muted}`}>
+          No hay movimientos para este período.
+        </p>
+      );
+    }
+
+    return groups.map((group) => {
+      const open = expandedGroups[`${kind}-${group.id}`] ?? true;
+      return (
+        <div className="border-b border-inherit last:border-b-0" key={group.id}>
+          <button
+            aria-expanded={open}
+            className={`flex w-full items-center gap-2 px-3 py-2 text-left transition ${
+              dark ? "hover:bg-[#1e1f22]" : "hover:bg-[#f4f5f8]"
+            }`}
+            onClick={() => toggleGroup(`${kind}-${group.id}`)}
+            type="button"
+          >
+            <span aria-hidden="true" className={muted}>{open ? "▾" : "▸"}</span>
+            <span className="min-w-0 flex-1 truncate font-semibold">{group.name}</span>
+            <span className="text-right font-semibold tabular-nums">
+              {formatMoney(group.amount, currency)}
+            </span>
+          </button>
+          {open ? (
+            <ul className="pb-1">
+              {group.transactions.map((transaction) => (
+                <li
+                  className={`flex items-start gap-2 px-4 py-1.5 text-xs ${muted}`}
+                  key={transaction.id}
+                >
+                  <span className="mt-1 h-1.5 w-1.5 flex-none rounded-full bg-current opacity-50" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-current">
+                      {transaction.description || group.name}
+                    </span>
+                    <span className="mt-0.5 block">
+                      {formatDate(transaction.occurred_on)} ·{" "}
+                      {AccountName({ accountId: transaction.account_id, accounts: wealthAccounts })}
+                    </span>
+                  </span>
+                  <span className="whitespace-nowrap text-right tabular-nums">
+                    {formatMoney(transaction.amount, currency)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      );
+    });
+  };
+
+  return (
+    <section
+      aria-label="Pizarra financiera"
+      className={`overflow-hidden rounded-2xl border shadow-sm ${border}`}
+    >
+      <div className={`flex flex-wrap items-center justify-between gap-2 border-b p-2 ${border} ${dark ? "bg-[#27282c]" : "bg-white"}`}>
+        <p className={`px-2 text-xs ${muted}`}>
+          Arrastra las tarjetas para organizarlas; arrastra el fondo para moverte.
+        </p>
+        <div className="flex items-center gap-1">
+          <button
+            aria-label="Alejar"
+            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+            onClick={() => zoomBy(1 / 1.2)}
+            type="button"
+          >
+            −
+          </button>
+          <span aria-live="polite" className={`min-w-12 text-center text-xs tabular-nums ${muted}`}>
+            {Math.round(camera.scale * 100)}%
+          </span>
+          <button
+            aria-label="Acercar"
+            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+            onClick={() => zoomBy(1.2)}
+            type="button"
+          >
+            +
+          </button>
+          <button
+            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+            onClick={() => {
+              setCamera({ x: 0, y: 0, scale: 0.9 });
+              setPositions({
+                income: { x: 32, y: 32 },
+                expense: { x: 32, y: 490 },
+                wealth: { x: 408, y: 32 },
+              });
+            }}
+            type="button"
+          >
+            Centrar
+          </button>
+          <button
+            aria-label={dark ? "Usar tema claro" : "Usar tema oscuro"}
+            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+            onClick={() => setDark((value) => !value)}
+            type="button"
+          >
+            {dark ? "☀" : "☾"}
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="relative h-[min(76vh,760px)] min-h-[480px] overflow-hidden touch-none"
+        onPointerDown={beginCanvasPan}
+        onWheel={(event) => {
+          event.preventDefault();
+          if (event.ctrlKey || event.metaKey) {
+            zoomBy(Math.exp(-event.deltaY * 0.01));
+          } else {
+            setCamera((current) => ({
+              ...current,
+              x: current.x - event.deltaX,
+              y: current.y - event.deltaY,
+            }));
+          }
+        }}
+        ref={viewportRef}
+        style={{
+          backgroundColor: background,
+          backgroundImage: `radial-gradient(${dots} 1.2px, transparent 1.2px)`,
+          backgroundPosition: `${camera.x}px ${camera.y}px`,
+          backgroundSize: `${24 * camera.scale}px ${24 * camera.scale}px`,
+          cursor: "grab",
+        }}
+      >
+        <div
+          className="absolute left-0 top-0 h-[1000px] w-[780px]"
+          data-board-pan-area
+          style={{
+            transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`,
+            transformOrigin: "top left",
+          }}
+        >
+          <FinanceBoardCard
+            currency={currency}
+            dark={dark}
+            id="income"
+            onDragStart={beginCardDrag}
+            position={positions.income}
+            title="⊕ Ingresos"
+            tone={dark ? "#34d27b" : "#15924a"}
+            total={income.reduce((total, group) => total + group.amount, 0)}
+          >
+            <div className="min-h-24 overflow-y-auto py-1">
+              {renderCashFlowGroups(income, "income")}
+            </div>
+            <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
+              Período: {periodLabel}
+            </footer>
+          </FinanceBoardCard>
+
+          <FinanceBoardCard
+            currency={currency}
+            dark={dark}
+            id="expense"
+            onDragStart={beginCardDrag}
+            position={positions.expense}
+            title="⊖ Gastos"
+            tone={dark ? "#ff5a5a" : "#d33a3a"}
+            total={expenses.reduce((total, group) => total + group.amount, 0)}
+          >
+            <div className="min-h-24 overflow-y-auto py-1">
+              {renderCashFlowGroups(expenses, "expense")}
+            </div>
+            <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
+              Período: {periodLabel}
+            </footer>
+          </FinanceBoardCard>
+
+          <FinanceBoardCard
+            currency={currency}
+            dark={dark}
+            id="wealth"
+            onDragStart={beginCardDrag}
+            position={positions.wealth}
+            title="≡ Patrimonio neto"
+            tone={dark ? "#3bb0ff" : "#1976d2"}
+            total={netWorth}
+          >
+            <div className="min-h-24 overflow-y-auto py-2">
+              <div className={`mx-3 mb-2 flex justify-between rounded-md px-2 py-1.5 text-xs font-semibold ${groupBackground}`}>
+                <span>Activos</span>
+                <span className="tabular-nums">{formatMoney(assetTotal, currency)}</span>
+              </div>
+              {assetAccounts.map((account) => (
+                <div className="flex justify-between gap-2 px-4 py-1.5 text-sm" key={account.id}>
+                  <span className="min-w-0 truncate">{account.name}</span>
+                  <span className="whitespace-nowrap tabular-nums">
+                    {formatMoney(account.amount, currency)}
+                  </span>
+                </div>
+              ))}
+              <div className={`mx-3 mb-2 mt-3 flex justify-between rounded-md px-2 py-1.5 text-xs font-semibold ${groupBackground}`}>
+                <span>Pasivos</span>
+                <span className="tabular-nums">{formatMoney(liabilityTotal, currency)}</span>
+              </div>
+              {liabilityAccounts.map((account) => (
+                <div className="flex justify-between gap-2 px-4 py-1.5 text-sm" key={account.id}>
+                  <span className="min-w-0 truncate">{account.name}</span>
+                  <span className="whitespace-nowrap tabular-nums">
+                    {formatMoney(-account.amount, currency)}
+                  </span>
+                </div>
+              ))}
+              {!wealthAccounts.length ? (
+                <p className={`px-4 py-4 text-center text-sm ${muted}`}>
+                  No hay cuentas en esta moneda.
+                </p>
+              ) : null}
+            </div>
+            <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
+              Saldo al {endDateLabel}
+            </footer>
+          </FinanceBoardCard>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -526,6 +912,9 @@ export default function FinanceApp() {
   const [notice, setNotice] = useState("");
   const [editingRecord, setEditingRecord] = useState(null);
   const [activeView, setActiveView] = useState("overview");
+  const [analysisStartDate, setAnalysisStartDate] = useState(null);
+  const [analysisEndDate, setAnalysisEndDate] = useState(null);
+  const [analysisCurrencySelection, setAnalysisCurrencySelection] = useState("");
   const [transactionSearch, setTransactionSearch] = useState("");
   const [transactionKindFilter, setTransactionKindFilter] = useState("all");
   const [transactionOrder, setTransactionOrder] = useState("newest");
@@ -942,6 +1331,16 @@ export default function FinanceApp() {
 
   const dataIsLoading = Boolean(session) && loadedForUser !== session.user.id;
   const now = session ? new Date() : null;
+  const defaultAnalysisStartDate = now
+    ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`
+    : "";
+  const defaultAnalysisEndDate = now
+    ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+        now.getDate(),
+      ).padStart(2, "0")}`
+    : "";
+  const selectedAnalysisStartDate = analysisStartDate ?? defaultAnalysisStartDate;
+  const selectedAnalysisEndDate = analysisEndDate ?? defaultAnalysisEndDate;
   const monthKey = now
     ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
     : "";
@@ -978,6 +1377,94 @@ export default function FinanceApp() {
         .reduce((total, account) => total + Number(account.current_balance), 0),
     }),
   );
+  const analysisCurrencies = [...new Set(data.accounts.map((account) => account.currency))].sort();
+  const analysisCurrency = analysisCurrencies.includes(analysisCurrencySelection)
+    ? analysisCurrencySelection
+    : analysisCurrencies[0] ?? "";
+  const analysisRangeValid =
+    Boolean(selectedAnalysisStartDate) &&
+    Boolean(selectedAnalysisEndDate) &&
+    selectedAnalysisStartDate <= selectedAnalysisEndDate;
+  const analysisStartLabel = selectedAnalysisStartDate
+    ? formatDate(selectedAnalysisStartDate)
+    : "—";
+  const analysisEndLabel = selectedAnalysisEndDate ? formatDate(selectedAnalysisEndDate) : "—";
+  const analysisAccounts = data.accounts.filter(
+    (account) => account.currency === analysisCurrency,
+  );
+  const analysisAccountIds = new Set(analysisAccounts.map((account) => account.id));
+  const analysisTransactions = analysisRangeValid
+    ? data.transactions.filter(
+        (transaction) =>
+          analysisAccountIds.has(transaction.account_id) &&
+          transaction.occurred_on >= selectedAnalysisStartDate &&
+          transaction.occurred_on <= selectedAnalysisEndDate,
+      )
+    : [];
+  const groupTransactionsByCategory = (kind) => {
+    const grouped = new Map();
+
+    for (const transaction of analysisTransactions) {
+      if (transaction.kind !== kind) {
+        continue;
+      }
+
+      const categoryId = transaction.category_id ?? "uncategorized";
+      const categoryName =
+        data.categories.find((category) => category.id === transaction.category_id)?.name ??
+        "Sin categoría";
+      const current = grouped.get(categoryId) ?? {
+        id: categoryId,
+        name: categoryName,
+        amount: 0,
+        transactions: [],
+      };
+      current.amount += Number(transaction.amount);
+      current.transactions.push(transaction);
+      grouped.set(categoryId, current);
+    }
+
+    return [...grouped.values()].sort((left, right) => right.amount - left.amount);
+  };
+  const analysisExpenses = groupTransactionsByCategory("expense");
+  const analysisIncome = groupTransactionsByCategory("income");
+  const analysisWealth = analysisRangeValid
+    ? analysisAccounts
+        .map((account) => {
+          const transactionBalance = data.transactions
+            .filter(
+              (transaction) =>
+                transaction.account_id === account.id &&
+                transaction.occurred_on <= selectedAnalysisEndDate,
+            )
+            .reduce(
+              (balance, transaction) =>
+                balance +
+                (transaction.kind === "income" ? 1 : -1) * Number(transaction.amount),
+              0,
+            );
+          const transferBalance = data.transfers
+            .filter(
+              (transfer) =>
+                transfer.occurred_on <= selectedAnalysisEndDate &&
+                (transfer.from_account_id === account.id || transfer.to_account_id === account.id),
+            )
+            .reduce(
+              (balance, transfer) =>
+                balance +
+                (transfer.to_account_id === account.id ? 1 : -1) * Number(transfer.amount),
+              0,
+            );
+
+          return {
+            id: account.id,
+            name: account.name,
+            account_type: account.account_type,
+            amount: Number(account.opening_balance) + transactionBalance + transferBalance,
+          };
+        })
+        .sort((left, right) => right.amount - left.amount)
+    : [];
   const budgetsWithProgress = data.budgets.map((budget) => {
     const spent = data.transactions
     .filter((transaction) => {
@@ -1614,6 +2101,68 @@ export default function FinanceApp() {
                 </div>
               ) : null}
             </Panel>
+          </div>
+        ) : null}
+
+        {activeView === "analysis" ? (
+          <div className="space-y-5">
+            <Panel
+              description="Elige un período y una moneda para actualizar las gráficas y tablas."
+              title="Período del análisis"
+            >
+              <div className="grid gap-4 sm:grid-cols-3">
+                <FormField label="Desde">
+                  <input
+                    className={FIELD_CLASS}
+                    onChange={(event) => setAnalysisStartDate(event.target.value)}
+                    type="date"
+                    value={selectedAnalysisStartDate}
+                  />
+                </FormField>
+                <FormField label="Hasta">
+                  <input
+                    className={FIELD_CLASS}
+                    onChange={(event) => setAnalysisEndDate(event.target.value)}
+                    type="date"
+                    value={selectedAnalysisEndDate}
+                  />
+                </FormField>
+                <FormField label="Moneda">
+                  <select
+                    className={FIELD_CLASS}
+                    disabled={!analysisCurrencies.length}
+                    onChange={(event) => setAnalysisCurrencySelection(event.target.value)}
+                    value={analysisCurrency}
+                  >
+                    {analysisCurrencies.map((currency) => (
+                      <option key={currency} value={currency}>{currency}</option>
+                    ))}
+                    {!analysisCurrencies.length ? <option value="">Sin cuentas</option> : null}
+                  </select>
+                </FormField>
+              </div>
+              {!analysisRangeValid ? (
+                <p className="mt-3 text-sm text-rose-700" role="alert">
+                  Selecciona un período válido: la fecha de inicio debe ser anterior o igual a la
+                  fecha final.
+                </p>
+              ) : null}
+            </Panel>
+
+            {analysisCurrency ? (
+              <FinanceBoard
+                currency={analysisCurrency}
+                endDateLabel={analysisEndLabel}
+                expenses={analysisExpenses}
+                income={analysisIncome}
+                periodLabel={`${analysisStartLabel} al ${analysisEndLabel}`}
+                wealthAccounts={analysisWealth}
+              />
+            ) : (
+              <Panel title="Pizarra financiera">
+                <EmptyState>Agrega una cuenta para visualizar tu pizarra por moneda.</EmptyState>
+              </Panel>
+            )}
           </div>
         ) : null}
 
