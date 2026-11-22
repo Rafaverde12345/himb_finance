@@ -362,7 +362,7 @@ function FinanceBoard({
   try {
     const parsedHiddenCards = JSON.parse(hiddenCardsSnapshot);
     if (Array.isArray(parsedHiddenCards)) {
-      hiddenCards = parsedHiddenCards.filter((id) => id === "income" || id === "expense");
+      hiddenCards = parsedHiddenCards.filter((id) => ["income", "expense", "wealth"].includes(id));
     }
   } catch {
     hiddenCards = [];
@@ -720,6 +720,15 @@ function FinanceBoard({
                 Mostrar Gastos
               </button>
             ) : null}
+            {hiddenCards.includes("wealth") ? (
+              <button
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${border} ${groupBackground} hover:opacity-80`}
+                onClick={() => saveHiddenCards(hiddenCards.filter((id) => id !== "wealth"))}
+                type="button"
+              >
+                Mostrar Patrimonio
+              </button>
+            ) : null}
             {BOARD_BLOCK_TYPES.map((option) => (
               <button
                 className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${border} ${groupBackground} hover:opacity-80`}
@@ -783,8 +792,8 @@ function FinanceBoard({
           </div>
         </div>
         <p className={`text-xs ${muted}`}>
-          Arrastra las tarjetas para organizarlas y el fondo para moverte. Los cuadros que agregues
-          se guardan en este navegador sin modificar tus movimientos.
+          Arrastra las tarjetas para organizarlas, el fondo para moverte y usa la rueda para acercar
+          o alejar. Los cuadros que agregues se guardan en este navegador sin modificar tus movimientos.
         </p>
         {blockLoadError || storageError || fullscreenError ? (
           <p className="text-sm text-rose-500" role="alert">
@@ -800,15 +809,7 @@ function FinanceBoard({
         onPointerDown={beginCanvasPan}
         onWheel={(event) => {
           event.preventDefault();
-          if (event.ctrlKey || event.metaKey) {
-            zoomBy(Math.exp(-event.deltaY * 0.01));
-          } else {
-            setCamera((current) => ({
-              ...current,
-              x: current.x - event.deltaX,
-              y: current.y - event.deltaY,
-            }));
-          }
+          zoomBy(Math.exp(-event.deltaY * 0.003));
         }}
         ref={viewportRef}
         style={{
@@ -817,6 +818,7 @@ function FinanceBoard({
           backgroundPosition: `${camera.x}px ${camera.y}px`,
           backgroundSize: `${24 * camera.scale}px ${24 * camera.scale}px`,
           cursor: "grab",
+          overscrollBehavior: "contain",
         }}
       >
         <div
@@ -867,10 +869,11 @@ function FinanceBoard({
             </footer>
           </FinanceBoardCard> : null}
 
-          <FinanceBoardCard
+          {!hiddenCards.includes("wealth") ? <FinanceBoardCard
             currency={currency}
             dark={dark}
             id="wealth"
+            onDelete={() => saveHiddenCards([...hiddenCards, "wealth"])}
             onDragStart={beginCardDrag}
             position={positions.wealth}
             title="≡ Patrimonio neto"
@@ -912,7 +915,7 @@ function FinanceBoard({
             <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
               Saldo al {endDateLabel}
             </footer>
-          </FinanceBoardCard>
+          </FinanceBoardCard> : null}
 
           {customBlocks.map((block, index) => {
             const definition = BOARD_BLOCK_TYPES.find((option) => option.type === block.type);
