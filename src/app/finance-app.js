@@ -329,14 +329,9 @@ function FinanceBoard({
   currencies,
   endDateLabel,
   endDate,
-  expenses,
-  income,
   onCurrencyChange,
-  onDeleteTransaction,
-  onEditTransaction,
   onEndDateChange,
   onStartDateChange,
-  periodLabel,
   rangeValid,
   startDate,
   userId,
@@ -370,26 +365,57 @@ function FinanceBoard({
   let customBlocks = [];
   let blockLoadError = "";
   try {
-    customBlocks = JSON.parse(blocksSnapshot);
+    const parsedBlocks = JSON.parse(blocksSnapshot);
     if (
-      !Array.isArray(customBlocks) ||
-      customBlocks.some(
+      !Array.isArray(parsedBlocks) ||
+      parsedBlocks.some(
         (block) =>
           !block ||
           typeof block.id !== "string" ||
           !BOARD_BLOCK_TYPES.some((option) => option.type === block.type) ||
           typeof block.title !== "string" ||
-          !Array.isArray(block.items) ||
-          block.items.some(
-            (item) =>
-              !item ||
-              typeof item.id !== "string" ||
-              typeof item.name !== "string" ||
-              !Number.isFinite(Number(item.amount)),
-          ),
+          (Array.isArray(block.folders)
+            ? block.folders.some(
+                (folder) =>
+                  !folder ||
+                  typeof folder.id !== "string" ||
+                  typeof folder.title !== "string" ||
+                  !Array.isArray(folder.items) ||
+                  folder.items.some(
+                    (item) =>
+                      !item ||
+                      typeof item.id !== "string" ||
+                      typeof item.name !== "string" ||
+                      !Number.isFinite(Number(item.amount)),
+                  ),
+              )
+            : !Array.isArray(block.items) ||
+              block.items.some(
+                (item) =>
+                  !item ||
+                  typeof item.id !== "string" ||
+                  typeof item.name !== "string" ||
+                  !Number.isFinite(Number(item.amount)),
+              )),
       )
     ) {
       throw new Error("Los cuadros guardados no tienen un formato válido.");
+    }
+    customBlocks = parsedBlocks.map((block) => ({
+      ...block,
+      folders:
+        block.folders ??
+        (block.items?.length
+          ? [{ id: `${block.id}-folder-general`, title: "General", items: block.items }]
+          : []),
+    }));
+    for (const [id, type, title] of [
+      ["income", "income", "Ingresos"],
+      ["expense", "expense", "Gastos"],
+    ]) {
+      if (!customBlocks.some((block) => block.id === id)) {
+        customBlocks.push({ id, type, title, folders: [] });
+      }
     }
   } catch (error) {
     customBlocks = [];
@@ -556,7 +582,7 @@ function FinanceBoard({
     }
     saveCustomBlocks([
       ...customBlocks,
-      { id, type, title: definition.newTitle, items: [] },
+      { id, type, title: definition.newTitle, folders: [] },
     ]);
     setPositions((current) => ({
       ...current,
@@ -566,17 +592,23 @@ function FinanceBoard({
       },
     }));
   };
-  const addCustomItem = (block, itemId) => {
+  const addCustomFolder = (block, folderId) => {
     updateCustomBlock(block.id, (current) => ({
       ...current,
-      items: [
-        ...current.items,
-        {
-          id: itemId,
-          name: "Nueva partida",
-          amount: 0,
-        },
-      ],
+      folders: [...current.folders, { id: folderId, title: "Nueva carpeta", items: [] }],
+    }));
+  };
+  const addCustomItem = (block, folderId, itemId) => {
+    updateCustomBlock(block.id, (current) => ({
+      ...current,
+      folders: current.folders.map((folder) =>
+        folder.id === folderId
+          ? {
+              ...folder,
+              items: [...folder.items, { id: itemId, name: "Nueva partida", amount: 0 }],
+            }
+          : folder,
+      ),
     }));
   };
   const toggleFullscreen = async () => {
@@ -595,97 +627,7 @@ function FinanceBoard({
     }
   };
 
-  const renderCashFlowGroups = (groups, kind) => {
-    if (!groups.length) {
-      return (
-        <p className={`px-4 py-6 text-center text-sm ${muted}`}>
-          No hay movimientos para este período.
-        </p>
-      );
-    }
-
-    return groups.map((group) => {
-      const open = expandedGroups[`${kind}-${group.id}`] ?? true;
-      return (
-        <div className="border-b border-inherit last:border-b-0" key={group.id}>
-          <button
-            aria-expanded={open}
-            className={`flex w-full items-center gap-2 px-3 py-2 text-left transition ${
-              dark ? "hover:bg-[#1e1f22]" : "hover:bg-[#f4f5f8]"
-            }`}
-            onClick={() => toggleGroup(`${kind}-${group.id}`)}
-            type="button"
-          >
-            <span aria-hidden="true" className={muted}>{open ? "▾" : "▸"}</span>
-            <span className="min-w-0 flex-1 truncate font-semibold">{group.name}</span>
-            <span className="text-right font-semibold tabular-nums">
-              {formatMoney(group.amount, currency)}
-            </span>
-          </button>
-          {open ? (
-            <ul className="pb-1">
-              {group.transactions.map((transaction) => (
-                <li
-                  className={`flex items-start gap-2 px-4 py-1.5 text-xs ${muted}`}
-                  key={transaction.id}
-                >
-                  <span className="mt-1 h-1.5 w-1.5 flex-none rounded-full bg-current opacity-50" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-current">
-                      {transaction.description || group.name}
-                    </span>
-                    <span className="mt-0.5 block">
-                      {formatDate(transaction.occurred_on)} ·{" "}
-                      {AccountName({ accountId: transaction.account_id, accounts: wealthAccounts })}
-                    </span>
-                  </span>
-                  <span className="whitespace-nowrap text-right tabular-nums">
-                    {formatMoney(transaction.amount, currency)}
-                  </span>
-                  <span className="flex flex-none items-center gap-2 pl-1">
-                    <button
-                      aria-label={`Editar ${transaction.description || group.name}`}
-                      className="font-medium text-emerald-700 hover:underline"
-                      onClick={() => onEditTransaction(transaction)}
-                      type="button"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      aria-label={`Eliminar ${transaction.description || group.name}`}
-                      className="font-medium text-rose-700 hover:underline"
-                      onClick={() => onDeleteTransaction(transaction)}
-                      type="button"
-                    >
-                      Eliminar
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      );
-    });
-  };
-
   const locatorCards = [
-    ...(!hiddenCards.includes("income")
-      ? [{
-          id: "income",
-          title: "Ingresos",
-          position: positions.income,
-          tone: dark ? "#34d27b" : "#15924a",
-        }]
-      : []),
-    ...(!hiddenCards.includes("expense")
-      ? [{
-          id: "expense",
-          title: "Gastos",
-          position: positions.expense,
-          tone: dark ? "#ff5a5a" : "#d33a3a",
-        }]
-      : []),
     ...(!hiddenCards.includes("wealth")
       ? [{
           id: "wealth",
@@ -694,24 +636,26 @@ function FinanceBoard({
           tone: dark ? "#3bb0ff" : "#1976d2",
         }]
       : []),
-    ...customBlocks.map((block, index) => ({
-      id: block.id,
-      title: block.title || "Cuadro sin nombre",
-      tone: dark
-        ? {
-            income: "#34d27b",
-            expense: "#ff5a5a",
-            asset: "#3bb0ff",
-            liability: "#f5c842",
-            patrimony: "#3bb0ff",
-          }[block.type]
-        : BOARD_BLOCK_TYPES.find((option) => option.type === block.type).tone,
-      position:
-        positions[block.id] ?? {
-          x: 408 + (index % 2) * 376,
-          y: 490 + Math.floor(index / 2) * 458,
-        },
-    })),
+    ...customBlocks
+      .filter((block) => !["income", "expense"].includes(block.id) || !hiddenCards.includes(block.id))
+      .map((block, index) => ({
+        id: block.id,
+        title: block.title || "Cuadro sin nombre",
+        tone: dark
+          ? {
+              income: "#34d27b",
+              expense: "#ff5a5a",
+              asset: "#3bb0ff",
+              liability: "#f5c842",
+              patrimony: "#3bb0ff",
+            }[block.type]
+          : BOARD_BLOCK_TYPES.find((option) => option.type === block.type).tone,
+        position:
+          positions[block.id] ?? {
+            x: 408 + (index % 2) * 376,
+            y: 490 + Math.floor(index / 2) * 458,
+          },
+      })),
   ].flatMap((card) => {
     if (!viewportSize.width || !viewportSize.height) return [];
     const left = camera.x + card.position.x * camera.scale;
@@ -879,8 +823,9 @@ function FinanceBoard({
           </div>
         </div>
         <p className={`text-xs ${muted}`}>
-          Arrastra las tarjetas para organizarlas, el fondo para moverte y usa la rueda para acercar
-          o alejar. Los cuadros que agregues se guardan en este navegador sin modificar tus movimientos.
+          Ingresos y Gastos son cuadros manuales. Añade carpetas como subtítulos y partidas dentro
+          de cada una. Arrastra las tarjetas para organizarlas, el fondo para moverte y usa la rueda
+          para acercar o alejar; los cambios se guardan en este navegador.
         </p>
         {blockLoadError || storageError || fullscreenError ? (
           <p className="text-sm text-rose-500" role="alert">
@@ -916,46 +861,6 @@ function FinanceBoard({
             transformOrigin: "top left",
           }}
         >
-          {!hiddenCards.includes("income") ? <FinanceBoardCard
-            currency={currency}
-            dark={dark}
-            id="income"
-            onDelete={() => saveHiddenCards([...hiddenCards, "income"])}
-            onDragStart={beginCardDrag}
-            position={positions.income}
-            title="⊕ Ingresos"
-            tone={dark ? "#34d27b" : "#15924a"}
-            total={income.reduce((total, group) => total + group.amount, 0)}
-            type="income"
-          >
-            <div className="min-h-24 overflow-y-auto py-1">
-              {renderCashFlowGroups(income, "income")}
-            </div>
-            <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
-              Período: {periodLabel}
-            </footer>
-          </FinanceBoardCard> : null}
-
-          {!hiddenCards.includes("expense") ? <FinanceBoardCard
-            currency={currency}
-            dark={dark}
-            id="expense"
-            onDelete={() => saveHiddenCards([...hiddenCards, "expense"])}
-            onDragStart={beginCardDrag}
-            position={positions.expense}
-            title="⊖ Gastos"
-            tone={dark ? "#ff5a5a" : "#d33a3a"}
-            total={expenses.reduce((total, group) => total + group.amount, 0)}
-            type="expense"
-          >
-            <div className="min-h-24 overflow-y-auto py-1">
-              {renderCashFlowGroups(expenses, "expense")}
-            </div>
-            <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
-              Período: {periodLabel}
-            </footer>
-          </FinanceBoardCard> : null}
-
           {!hiddenCards.includes("wealth") ? <FinanceBoardCard
             currency={currency}
             dark={dark}
@@ -1004,22 +909,28 @@ function FinanceBoard({
             </footer>
           </FinanceBoardCard> : null}
 
-          {customBlocks.map((block, index) => {
-            const definition = BOARD_BLOCK_TYPES.find((option) => option.type === block.type);
-            const tone = dark
-              ? {
-                  income: "#34d27b",
-                  expense: "#ff5a5a",
-                  asset: "#3bb0ff",
-                  liability: "#f5c842",
-                  patrimony: "#3bb0ff",
-                }[block.type]
-              : definition.tone;
-            const fallbackPosition = {
-              x: 408 + (index % 2) * 376,
-              y: 490 + Math.floor(index / 2) * 458,
-            };
-            const total = block.items.reduce((sum, item) => sum + Number(item.amount), 0);
+          {customBlocks
+            .filter((block) => !["income", "expense"].includes(block.id) || !hiddenCards.includes(block.id))
+            .map((block, index) => {
+              const definition = BOARD_BLOCK_TYPES.find((option) => option.type === block.type);
+              const tone = dark
+                ? {
+                    income: "#34d27b",
+                    expense: "#ff5a5a",
+                    asset: "#3bb0ff",
+                    liability: "#f5c842",
+                    patrimony: "#3bb0ff",
+                  }[block.type]
+                : definition.tone;
+              const fallbackPosition = {
+                x: 408 + (index % 2) * 376,
+                y: 490 + Math.floor(index / 2) * 458,
+              };
+              const total = block.folders.reduce(
+                (sum, folder) =>
+                  sum + folder.items.reduce((folderSum, item) => folderSum + Number(item.amount), 0),
+                0,
+              );
 
             return (
               <FinanceBoardCard
@@ -1027,7 +938,11 @@ function FinanceBoard({
                 dark={dark}
                 id={block.id}
                 key={block.id}
-                onDelete={() => saveCustomBlocks(customBlocks.filter((item) => item.id !== block.id))}
+                onDelete={() =>
+                  ["income", "expense"].includes(block.id)
+                    ? saveHiddenCards([...hiddenCards, block.id])
+                    : saveCustomBlocks(customBlocks.filter((item) => item.id !== block.id))
+                }
                 onDragStart={beginCardDrag}
                 position={positions[block.id] ?? fallbackPosition}
                 title={
@@ -1055,75 +970,99 @@ function FinanceBoard({
                 type={block.type}
               >
                 <div className="max-h-[320px] min-h-24 overflow-y-auto py-1">
-                  {block.items.map((item) => (
-                    <div className="flex items-center gap-1 px-2 py-1" key={item.id}>
-                      <input
-                        aria-label="Nombre de la partida"
-                        className={`min-w-0 flex-1 rounded px-1 py-1 text-sm outline-none focus:ring-1 ${
-                          dark
-                            ? "text-[#e9eaee] focus:ring-[#8b909b]"
-                            : "text-[#1f2430] focus:ring-slate-400"
-                        }`}
-                        maxLength={60}
-                        onChange={(event) =>
-                          updateCustomBlock(block.id, (current) => ({
+                  {block.folders.map((folder) => (
+                    <section className={`border-b px-2 py-1.5 ${border}`} key={folder.id}>
+                      <div className="flex items-center gap-1">
+                        <input
+                          aria-label="Nombre de la carpeta"
+                          className={`min-w-0 flex-1 rounded px-1 py-1 text-xs font-bold outline-none focus:ring-1 ${dark ? "text-[#e9eaee] focus:ring-[#8b909b]" : "text-[#1f2430] focus:ring-slate-400"}`}
+                          maxLength={60}
+                          onChange={(event) => updateCustomBlock(block.id, (current) => ({
                             ...current,
-                            items: current.items.map((entry) =>
-                              entry.id === item.id ? { ...entry, name: event.target.value } : entry,
-                            ),
-                          }))
-                        }
-                        style={{ color: dark ? "#e9eaee" : "#1f2430" }}
-                        value={item.name}
-                      />
-                      <input
-                        aria-label={`Importe de ${item.name}`}
-                        className={`w-28 rounded px-1 py-1 text-right text-sm tabular-nums outline-none focus:ring-1 ${
-                          dark
-                            ? "text-[#e9eaee] focus:ring-[#8b909b]"
-                            : "text-[#1f2430] focus:ring-slate-400"
-                        }`}
-                        min="0"
-                        onChange={(event) =>
-                          updateCustomBlock(block.id, (current) => ({
+                            folders: current.folders.map((entry) => entry.id === folder.id ? { ...entry, title: event.target.value } : entry),
+                          }))}
+                          placeholder="Nombre de carpeta"
+                          style={{ color: dark ? "#e9eaee" : "#1f2430" }}
+                          value={folder.title}
+                        />
+                        <button
+                          aria-label={`Eliminar carpeta ${folder.title}`}
+                          className={`rounded px-1 ${dark ? "text-[#8b909b] hover:text-[#ff5a5a]" : "text-slate-500 hover:text-rose-700"}`}
+                          onClick={() => updateCustomBlock(block.id, (current) => ({
                             ...current,
-                            items: current.items.map((entry) =>
-                              entry.id === item.id
-                                ? { ...entry, amount: event.target.value }
-                                : entry,
-                            ),
-                          }))
-                        }
-                        step="0.01"
-                        style={{ color: dark ? "#e9eaee" : "#1f2430", colorScheme: dark ? "dark" : "light" }}
-                        type="number"
-                        value={item.amount}
-                      />
+                            folders: current.folders.filter((entry) => entry.id !== folder.id),
+                          }))}
+                          title="Eliminar carpeta y sus partidas"
+                          type="button"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      {folder.items.map((item) => (
+                        <div className="flex items-center gap-1" key={item.id}>
+                          <input
+                            aria-label="Nombre de la partida"
+                            className={`min-w-0 flex-1 rounded px-1 py-1 text-sm outline-none focus:ring-1 ${dark ? "text-[#e9eaee] focus:ring-[#8b909b]" : "text-[#1f2430] focus:ring-slate-400"}`}
+                            maxLength={60}
+                            onChange={(event) => updateCustomBlock(block.id, (current) => ({
+                              ...current,
+                              folders: current.folders.map((entry) => entry.id === folder.id ? {
+                                ...entry,
+                                items: entry.items.map((part) => part.id === item.id ? { ...part, name: event.target.value } : part),
+                              } : entry),
+                            }))}
+                            style={{ color: dark ? "#e9eaee" : "#1f2430" }}
+                            value={item.name}
+                          />
+                          <input
+                            aria-label={`Importe de ${item.name}`}
+                            className={`w-28 rounded px-1 py-1 text-right text-sm tabular-nums outline-none focus:ring-1 ${dark ? "text-[#e9eaee] focus:ring-[#8b909b]" : "text-[#1f2430] focus:ring-slate-400"}`}
+                            min="0"
+                            onChange={(event) => updateCustomBlock(block.id, (current) => ({
+                              ...current,
+                              folders: current.folders.map((entry) => entry.id === folder.id ? {
+                                ...entry,
+                                items: entry.items.map((part) => part.id === item.id ? { ...part, amount: event.target.value } : part),
+                              } : entry),
+                            }))}
+                            step="0.01"
+                            style={{ color: dark ? "#e9eaee" : "#1f2430", colorScheme: dark ? "dark" : "light" }}
+                            type="number"
+                            value={item.amount}
+                          />
+                          <button
+                            aria-label={`Eliminar ${item.name}`}
+                            className={`rounded px-1 ${dark ? "text-[#8b909b] hover:text-[#ff5a5a]" : "text-slate-500 hover:text-rose-700"}`}
+                            onClick={() => updateCustomBlock(block.id, (current) => ({
+                              ...current,
+                              folders: current.folders.map((entry) => entry.id === folder.id ? {
+                                ...entry,
+                                items: entry.items.filter((part) => part.id !== item.id),
+                              } : entry),
+                            }))}
+                            type="button"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
                       <button
-                        aria-label={`Eliminar ${item.name}`}
-                        className={`rounded px-1 ${dark ? "text-[#8b909b] hover:text-[#ff5a5a]" : "text-slate-500 hover:text-rose-700"}`}
-                        onClick={() =>
-                          updateCustomBlock(block.id, (current) => ({
-                            ...current,
-                            items: current.items.filter((entry) => entry.id !== item.id),
-                          }))
-                        }
+                        className={`mt-1 rounded-lg border border-dashed px-2 py-1 text-xs ${dark ? "border-[#34363c] text-[#e9eaee] hover:text-white" : "border-[#cfd4de] text-slate-700 hover:text-slate-950"}`}
+                        onClick={() => addCustomItem(block, folder.id, createBoardItemId("item"))}
                         type="button"
                       >
-                        ×
+                        + Partida
                       </button>
-                    </div>
+                    </section>
                   ))}
                 </div>
                 <footer className={`border-t px-3 py-2 ${border}`}>
                   <button
-                    className={`rounded-lg border border-dashed px-2 py-1 text-xs ${
-                      dark ? "border-[#34363c] text-[#e9eaee] hover:text-white" : "border-[#cfd4de] text-slate-700 hover:text-slate-950"
-                    }`}
-                    onClick={() => addCustomItem(block, createBoardItemId("item"))}
+                    className={`rounded-lg border border-dashed px-2 py-1 text-xs ${dark ? "border-[#34363c] text-[#e9eaee] hover:text-white" : "border-[#cfd4de] text-slate-700 hover:text-slate-950"}`}
+                    onClick={() => addCustomFolder(block, createBoardItemId("folder"))}
                     type="button"
                   >
-                    + Partida
+                    + Carpeta
                   </button>
                 </footer>
               </FinanceBoardCard>
@@ -2417,22 +2356,9 @@ export default function FinanceApp() {
                 currencies={analysisCurrencies}
                 endDate={selectedAnalysisEndDate}
                 endDateLabel={analysisEndLabel}
-                expenses={analysisExpenses}
-                income={analysisIncome}
                 onCurrencyChange={setAnalysisCurrencySelection}
-                onDeleteTransaction={(transaction) =>
-                  deleteRecord(
-                    "himb_transactions",
-                    transaction.id,
-                    transaction.kind === "income" ? "el ingreso" : "el gasto",
-                  )
-                }
-                onEditTransaction={(transaction) =>
-                  openEditRecord("himb_transactions", transaction)
-                }
                 onEndDateChange={setAnalysisEndDate}
                 onStartDateChange={setAnalysisStartDate}
-                periodLabel={`${analysisStartLabel} al ${analysisEndLabel}`}
                 rangeValid={analysisRangeValid}
                 startDate={selectedAnalysisStartDate}
                 userId={session.user.id}
@@ -2717,22 +2643,9 @@ export default function FinanceApp() {
                 currencies={analysisCurrencies}
                 endDate={selectedAnalysisEndDate}
                 endDateLabel={analysisEndLabel}
-                expenses={analysisExpenses}
-                income={analysisIncome}
                 onCurrencyChange={setAnalysisCurrencySelection}
-                onDeleteTransaction={(transaction) =>
-                  deleteRecord(
-                    "himb_transactions",
-                    transaction.id,
-                    transaction.kind === "income" ? "el ingreso" : "el gasto",
-                  )
-                }
-                onEditTransaction={(transaction) =>
-                  openEditRecord("himb_transactions", transaction)
-                }
                 onEndDateChange={setAnalysisEndDate}
                 onStartDateChange={setAnalysisStartDate}
-                periodLabel={`${analysisStartLabel} al ${analysisEndLabel}`}
                 rangeValid={analysisRangeValid}
                 startDate={selectedAnalysisStartDate}
                 userId={session.user.id}
