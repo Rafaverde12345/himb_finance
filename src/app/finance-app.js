@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createSupabaseBrowserClient } from "../lib/supabase/client";
 
 const EMPTY_DATA = {
@@ -11,6 +11,59 @@ const EMPTY_DATA = {
   transfers: [],
   transactions: [],
 };
+
+const BOARD_BLOCK_TYPES = [
+  { type: "income", label: "Ingresos", newTitle: "Nuevo ingreso", icon: "⊕", tone: "#15924a" },
+  { type: "expense", label: "Gastos", newTitle: "Nuevo gasto", icon: "⊖", tone: "#d33a3a" },
+  { type: "asset", label: "Activo", newTitle: "Nuevo activo", icon: "⇧", tone: "#1976d2" },
+  { type: "liability", label: "Pasivo", newTitle: "Nuevo pasivo", icon: "⇩", tone: "#b88700" },
+  { type: "patrimony", label: "Patrimonio", newTitle: "Nuevo patrimonio", icon: "≡", tone: "#1976d2" },
+];
+const BOARD_STORAGE_EVENT = "himb-finance-board-change";
+
+function subscribeToBoardBlocks(storageKey, notify) {
+  const handleStorage = (event) => {
+    if (event.key === storageKey || event.key === `${storageKey}:hidden-cards` || event.key === null) {
+      notify();
+    }
+  };
+  const handleBoardChange = (event) => {
+    if (event.detail === storageKey) {
+      notify();
+    }
+  };
+
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(BOARD_STORAGE_EVENT, handleBoardChange);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(BOARD_STORAGE_EVENT, handleBoardChange);
+  };
+}
+
+function getBoardBlocksSnapshot(storageKey) {
+  return typeof window === "undefined" ? "[]" : window.localStorage.getItem(storageKey) ?? "[]";
+}
+
+function getHiddenBoardCardsSnapshot(storageKey) {
+  if (typeof window === "undefined") {
+    return "[]";
+  }
+
+  try {
+    return window.localStorage.getItem(`${storageKey}:hidden-cards`) ?? "[]";
+  } catch {
+    return "[]";
+  }
+}
+
+function getServerBoardBlocksSnapshot() {
+  return "[]";
+}
+
+function createBoardItemId(prefix) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
 
 const FIELD_CLASS =
   "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";
@@ -210,18 +263,22 @@ function FinanceBoardCard({
   currency,
   dark,
   id,
+  onDelete,
   onDragStart,
   position,
   title,
   total,
   tone,
+  type,
 }) {
   const styles = {
     income: dark
       ? "border-[#34d27b] text-[#34d27b]"
       : "border-[#15924a] text-[#15924a]",
     expense: dark ? "border-[#ff5a5a] text-[#ff5a5a]" : "border-[#d33a3a] text-[#d33a3a]",
-    wealth: dark ? "border-[#3bb0ff] text-[#1976d2]" : "border-[#1976d2] text-[#1976d2]",
+    asset: dark ? "border-[#3bb0ff] text-[#3bb0ff]" : "border-[#1976d2] text-[#1976d2]",
+    liability: dark ? "border-[#f5c842] text-[#f5c842]" : "border-[#b88700] text-[#8a6500]",
+    patrimony: dark ? "border-[#3bb0ff] text-[#3bb0ff]" : "border-[#1976d2] text-[#1976d2]",
   };
 
   return (
@@ -230,22 +287,37 @@ function FinanceBoardCard({
         dark ? "border-[#34363c] bg-[#27282c] text-[#e9eaee] shadow-black/50" : "border-[#cfd4de] bg-white text-[#1f2430]"
       }`}
       data-board-card
-      style={{ left: position.x, top: position.y }}
+      style={{ colorScheme: dark ? "dark" : "light", left: position.x, top: position.y }}
     >
       <header
         className={`flex cursor-grab touch-none items-center gap-2 border-b-2 px-3 py-2 active:cursor-grabbing ${
           dark ? "border-[#34363c] bg-[#1e1f22]" : "border-[#cfd4de] bg-[#f4f5f8]"
         }`}
-        onPointerDown={(event) => onDragStart(id, event)}
+        onPointerDown={(event) => {
+          if (!event.target.closest("input, button")) {
+            onDragStart(id, event, position);
+          }
+        }}
         style={{ borderBottomColor: tone }}
       >
-        <span aria-hidden="true" className="text-xl text-slate-400">⠿</span>
-        <h2 className={`min-w-0 flex-1 truncate text-sm font-bold ${styles[id]}`}>
+        <span aria-hidden="true" className={`text-xl ${dark ? "text-[#8b909b]" : "text-slate-400"}`}>⠿</span>
+        <h2 className={`min-w-0 flex-1 truncate text-sm font-bold ${styles[type]}`}>
           {title}
         </h2>
-        <strong className={`whitespace-nowrap text-sm tabular-nums ${styles[id]}`}>
+        <strong className={`whitespace-nowrap text-sm tabular-nums ${styles[type]}`}>
           {formatMoney(total, currency)}
         </strong>
+        {onDelete ? (
+          <button
+            aria-label="Quitar cuadro"
+            title="Quitar cuadro de la pizarra"
+            className={`rounded px-1.5 text-xs font-medium ${dark ? "text-[#8b909b] hover:text-[#ff5a5a]" : "text-slate-500 hover:text-rose-700"}`}
+            onClick={onDelete}
+            type="button"
+          >
+            ×
+          </button>
+        ) : null}
       </header>
       {children}
     </section>
@@ -254,12 +326,75 @@ function FinanceBoardCard({
 
 function FinanceBoard({
   currency,
+  currencies,
   endDateLabel,
+  endDate,
   expenses,
   income,
+  onCurrencyChange,
+  onDeleteTransaction,
+  onEditTransaction,
+  onEndDateChange,
+  onStartDateChange,
   periodLabel,
+  rangeValid,
+  startDate,
+  userId,
   wealthAccounts,
 }) {
+  const storageKey = `himb-finance-board-v1:${userId}`;
+  const subscribe = useCallback(
+    (notify) => subscribeToBoardBlocks(storageKey, notify),
+    [storageKey],
+  );
+  const getSnapshot = useCallback(() => getBoardBlocksSnapshot(storageKey), [storageKey]);
+  const blocksSnapshot = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerBoardBlocksSnapshot,
+  );
+  const hiddenCardsSnapshot = useSyncExternalStore(
+    subscribe,
+    useCallback(() => getHiddenBoardCardsSnapshot(storageKey), [storageKey]),
+    getServerBoardBlocksSnapshot,
+  );
+  let hiddenCards = [];
+  try {
+    const parsedHiddenCards = JSON.parse(hiddenCardsSnapshot);
+    if (Array.isArray(parsedHiddenCards)) {
+      hiddenCards = parsedHiddenCards.filter((id) => id === "income" || id === "expense");
+    }
+  } catch {
+    hiddenCards = [];
+  }
+  let customBlocks = [];
+  let blockLoadError = "";
+  try {
+    customBlocks = JSON.parse(blocksSnapshot);
+    if (
+      !Array.isArray(customBlocks) ||
+      customBlocks.some(
+        (block) =>
+          !block ||
+          typeof block.id !== "string" ||
+          !BOARD_BLOCK_TYPES.some((option) => option.type === block.type) ||
+          typeof block.title !== "string" ||
+          !Array.isArray(block.items) ||
+          block.items.some(
+            (item) =>
+              !item ||
+              typeof item.id !== "string" ||
+              typeof item.name !== "string" ||
+              !Number.isFinite(Number(item.amount)),
+          ),
+      )
+    ) {
+      throw new Error("Los cuadros guardados no tienen un formato válido.");
+    }
+  } catch (error) {
+    customBlocks = [];
+    blockLoadError = `No se pudieron leer los cuadros guardados: ${error.message}`;
+  }
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 0.9 });
   const [positions, setPositions] = useState({
     income: { x: 32, y: 32 },
@@ -268,8 +403,21 @@ function FinanceBoard({
   });
   const [expandedGroups, setExpandedGroups] = useState({});
   const [dark, setDark] = useState(false);
+  const [storageError, setStorageError] = useState("");
+  const [fullscreenError, setFullscreenError] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const boardRef = useRef(null);
   const viewportRef = useRef(null);
   const dragRef = useRef(null);
+
+  useEffect(() => {
+    const updateFullscreenState = () => {
+      setIsFullscreen(document.fullscreenElement === boardRef.current);
+    };
+
+    document.addEventListener("fullscreenchange", updateFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", updateFullscreenState);
+  }, []);
 
   useEffect(() => {
     const handlePointerMove = (event) => {
@@ -308,14 +456,14 @@ function FinanceBoard({
     };
   }, [camera.scale]);
 
-  const beginCardDrag = (id, event) => {
+  const beginCardDrag = (id, event, position) => {
     event.preventDefault();
     dragRef.current = {
       kind: "card",
       id,
       startX: event.clientX,
       startY: event.clientY,
-      position: positions[id],
+      position,
     };
   };
   const beginCanvasPan = (event) => {
@@ -360,6 +508,73 @@ function FinanceBoard({
   const muted = dark ? "text-[#8b909b]" : "text-[#7b8394]";
   const border = dark ? "border-[#34363c]" : "border-[#cfd4de]";
   const groupBackground = dark ? "bg-[#1e1f22]" : "bg-[#f4f5f8]";
+
+  const saveCustomBlocks = (nextBlocks) => {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(nextBlocks));
+      window.dispatchEvent(new CustomEvent(BOARD_STORAGE_EVENT, { detail: storageKey }));
+      setStorageError("");
+    } catch (error) {
+      setStorageError(`No se pudieron guardar los cuadros: ${error.message}`);
+    }
+  };
+  const saveHiddenCards = (nextCards) => {
+    try {
+      window.localStorage.setItem(`${storageKey}:hidden-cards`, JSON.stringify(nextCards));
+      window.dispatchEvent(new CustomEvent(BOARD_STORAGE_EVENT, { detail: storageKey }));
+      setStorageError("");
+    } catch (error) {
+      setStorageError(`No se pudieron actualizar los cuadros: ${error.message}`);
+    }
+  };
+  const updateCustomBlock = (id, update) => {
+    saveCustomBlocks(customBlocks.map((block) => (block.id === id ? update(block) : block)));
+  };
+  const addCustomBlock = (type, id) => {
+    const definition = BOARD_BLOCK_TYPES.find((option) => option.type === type);
+    if (!definition) {
+      return;
+    }
+    saveCustomBlocks([
+      ...customBlocks,
+      { id, type, title: definition.newTitle, items: [] },
+    ]);
+    setPositions((current) => ({
+      ...current,
+      [id]: {
+        x: 408 + (customBlocks.length % 2) * 376,
+        y: 490 + Math.floor(customBlocks.length / 2) * 458,
+      },
+    }));
+  };
+  const addCustomItem = (block, itemId) => {
+    updateCustomBlock(block.id, (current) => ({
+      ...current,
+      items: [
+        ...current.items,
+        {
+          id: itemId,
+          name: "Nueva partida",
+          amount: 0,
+        },
+      ],
+    }));
+  };
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === boardRef.current) {
+        await document.exitFullscreen();
+      } else {
+        if (!boardRef.current?.requestFullscreen) {
+          throw new Error("Este navegador no permite pantalla completa.");
+        }
+        await boardRef.current.requestFullscreen();
+      }
+      setFullscreenError("");
+    } catch (error) {
+      setFullscreenError(`No se pudo cambiar a pantalla completa: ${error.message}`);
+    }
+  };
 
   const renderCashFlowGroups = (groups, kind) => {
     if (!groups.length) {
@@ -408,6 +623,24 @@ function FinanceBoard({
                   <span className="whitespace-nowrap text-right tabular-nums">
                     {formatMoney(transaction.amount, currency)}
                   </span>
+                  <span className="flex flex-none items-center gap-2 pl-1">
+                    <button
+                      aria-label={`Editar ${transaction.description || group.name}`}
+                      className="font-medium text-emerald-700 hover:underline"
+                      onClick={() => onEditTransaction(transaction)}
+                      type="button"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      aria-label={`Eliminar ${transaction.description || group.name}`}
+                      className="font-medium text-rose-700 hover:underline"
+                      onClick={() => onDeleteTransaction(transaction)}
+                      type="button"
+                    >
+                      Eliminar
+                    </button>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -420,59 +653,150 @@ function FinanceBoard({
   return (
     <section
       aria-label="Pizarra financiera"
-      className={`overflow-hidden rounded-2xl border shadow-sm ${border}`}
+      className={
+        isFullscreen
+          ? `flex h-screen w-screen flex-col overflow-hidden border-0 shadow-none ${dark ? "bg-[#17181b]" : "bg-[#eef0f4]"}`
+          : `overflow-hidden rounded-2xl border shadow-sm ${border}`
+      }
+      ref={boardRef}
+      style={{ color: dark ? "#e9eaee" : "#1f2430", colorScheme: dark ? "dark" : "light" }}
     >
-      <div className={`flex flex-wrap items-center justify-between gap-2 border-b p-2 ${border} ${dark ? "bg-[#27282c]" : "bg-white"}`}>
-        <p className={`px-2 text-xs ${muted}`}>
-          Arrastra las tarjetas para organizarlas; arrastra el fondo para moverte.
-        </p>
-        <div className="flex items-center gap-1">
-          <button
-            aria-label="Alejar"
-            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
-            onClick={() => zoomBy(1 / 1.2)}
-            type="button"
-          >
-            −
-          </button>
-          <span aria-live="polite" className={`min-w-12 text-center text-xs tabular-nums ${muted}`}>
-            {Math.round(camera.scale * 100)}%
-          </span>
-          <button
-            aria-label="Acercar"
-            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
-            onClick={() => zoomBy(1.2)}
-            type="button"
-          >
-            +
-          </button>
-          <button
-            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
-            onClick={() => {
-              setCamera({ x: 0, y: 0, scale: 0.9 });
-              setPositions({
-                income: { x: 32, y: 32 },
-                expense: { x: 32, y: 490 },
-                wealth: { x: 408, y: 32 },
-              });
-            }}
-            type="button"
-          >
-            Centrar
-          </button>
-          <button
-            aria-label={dark ? "Usar tema claro" : "Usar tema oscuro"}
-            className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
-            onClick={() => setDark((value) => !value)}
-            type="button"
-          >
-            {dark ? "☀" : "☾"}
-          </button>
+      <div className={`shrink-0 space-y-3 border-b p-3 ${border} ${dark ? "bg-[#27282c]" : "bg-white"}`}>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            ["Desde", startDate, onStartDateChange],
+            ["Hasta", endDate, onEndDateChange],
+          ].map(([label, value, onChange]) => (
+            <label className={`block text-xs font-medium ${dark ? "text-[#e9eaee]" : "text-slate-700"}`} key={label}>
+              {label}
+              <input
+                className={`${FIELD_CLASS} ${dark ? "border-[#34363c] bg-[#1e1f22] text-[#e9eaee]" : ""}`}
+                onChange={(event) => onChange(event.target.value)}
+                style={{ color: dark ? "#e9eaee" : "#0f172a", colorScheme: dark ? "dark" : "light" }}
+                type="date"
+                value={value}
+              />
+            </label>
+          ))}
+          <label className={`block text-xs font-medium ${dark ? "text-[#e9eaee]" : "text-slate-700"}`}>
+            Moneda
+            <select
+              className={`${FIELD_CLASS} ${dark ? "border-[#34363c] bg-[#1e1f22] text-[#e9eaee]" : ""}`}
+              disabled={!currencies.length}
+              onChange={(event) => onCurrencyChange(event.target.value)}
+              style={{ color: dark ? "#e9eaee" : "#0f172a", colorScheme: dark ? "dark" : "light" }}
+              value={currency}
+            >
+              {currencies.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+              {!currencies.length ? <option value="">Sin cuentas</option> : null}
+            </select>
+          </label>
         </div>
+        {!rangeValid ? (
+          <p className="text-sm text-rose-500" role="alert">
+            Selecciona un período válido: la fecha de inicio debe ser anterior o igual a la fecha
+            final.
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-1">
+            {hiddenCards.includes("income") ? (
+              <button
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${border} ${groupBackground} hover:opacity-80`}
+                onClick={() => saveHiddenCards(hiddenCards.filter((id) => id !== "income"))}
+                type="button"
+              >
+                Mostrar Ingresos
+              </button>
+            ) : null}
+            {hiddenCards.includes("expense") ? (
+              <button
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${border} ${groupBackground} hover:opacity-80`}
+                onClick={() => saveHiddenCards(hiddenCards.filter((id) => id !== "expense"))}
+                type="button"
+              >
+                Mostrar Gastos
+              </button>
+            ) : null}
+            {BOARD_BLOCK_TYPES.map((option) => (
+              <button
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${border} ${groupBackground} hover:opacity-80`}
+                key={option.type}
+                onClick={() => addCustomBlock(option.type, createBoardItemId("custom"))}
+                type="button"
+              >
+                + {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              aria-label="Alejar"
+              className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+              onClick={() => zoomBy(1 / 1.2)}
+              type="button"
+            >
+              −
+            </button>
+            <span aria-live="polite" className={`min-w-12 text-center text-xs tabular-nums ${muted}`}>
+              {Math.round(camera.scale * 100)}%
+            </span>
+            <button
+              aria-label="Acercar"
+              className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+              onClick={() => zoomBy(1.2)}
+              type="button"
+            >
+              +
+            </button>
+            <button
+              className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+              onClick={() => {
+                setCamera({ x: 0, y: 0, scale: 0.9 });
+                setPositions({
+                  income: { x: 32, y: 32 },
+                  expense: { x: 32, y: 490 },
+                  wealth: { x: 408, y: 32 },
+                });
+              }}
+              type="button"
+            >
+              Centrar
+            </button>
+            <button
+              aria-label={dark ? "Usar tema claro" : "Usar tema oscuro"}
+              className={`rounded-lg border px-3 py-1.5 text-sm ${border} ${groupBackground}`}
+              onClick={() => setDark((value) => !value)}
+              type="button"
+            >
+              {dark ? "☀" : "☾"}
+            </button>
+            <button
+              className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${border} ${groupBackground}`}
+              onClick={toggleFullscreen}
+              type="button"
+            >
+              {isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+            </button>
+          </div>
+        </div>
+        <p className={`text-xs ${muted}`}>
+          Arrastra las tarjetas para organizarlas y el fondo para moverte. Los cuadros que agregues
+          se guardan en este navegador sin modificar tus movimientos.
+        </p>
+        {blockLoadError || storageError || fullscreenError ? (
+          <p className="text-sm text-rose-500" role="alert">
+            {blockLoadError || storageError || fullscreenError}
+          </p>
+        ) : null}
       </div>
 
       <div
-        className="relative h-[min(76vh,760px)] min-h-[480px] overflow-hidden touch-none"
+        className={`relative min-h-[480px] flex-1 overflow-hidden touch-none ${
+          isFullscreen ? "min-h-0" : "h-[min(76vh,760px)]"
+        }`}
         onPointerDown={beginCanvasPan}
         onWheel={(event) => {
           event.preventDefault();
@@ -496,22 +820,24 @@ function FinanceBoard({
         }}
       >
         <div
-          className="absolute left-0 top-0 h-[1000px] w-[780px]"
+          className="absolute left-0 top-0 h-[3000px] w-[1600px]"
           data-board-pan-area
           style={{
             transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`,
             transformOrigin: "top left",
           }}
         >
-          <FinanceBoardCard
+          {!hiddenCards.includes("income") ? <FinanceBoardCard
             currency={currency}
             dark={dark}
             id="income"
+            onDelete={() => saveHiddenCards([...hiddenCards, "income"])}
             onDragStart={beginCardDrag}
             position={positions.income}
             title="⊕ Ingresos"
             tone={dark ? "#34d27b" : "#15924a"}
             total={income.reduce((total, group) => total + group.amount, 0)}
+            type="income"
           >
             <div className="min-h-24 overflow-y-auto py-1">
               {renderCashFlowGroups(income, "income")}
@@ -519,17 +845,19 @@ function FinanceBoard({
             <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
               Período: {periodLabel}
             </footer>
-          </FinanceBoardCard>
+          </FinanceBoardCard> : null}
 
-          <FinanceBoardCard
+          {!hiddenCards.includes("expense") ? <FinanceBoardCard
             currency={currency}
             dark={dark}
             id="expense"
+            onDelete={() => saveHiddenCards([...hiddenCards, "expense"])}
             onDragStart={beginCardDrag}
             position={positions.expense}
             title="⊖ Gastos"
             tone={dark ? "#ff5a5a" : "#d33a3a"}
             total={expenses.reduce((total, group) => total + group.amount, 0)}
+            type="expense"
           >
             <div className="min-h-24 overflow-y-auto py-1">
               {renderCashFlowGroups(expenses, "expense")}
@@ -537,7 +865,7 @@ function FinanceBoard({
             <footer className={`border-t px-3 py-2 text-xs ${border} ${muted}`}>
               Período: {periodLabel}
             </footer>
-          </FinanceBoardCard>
+          </FinanceBoardCard> : null}
 
           <FinanceBoardCard
             currency={currency}
@@ -548,6 +876,7 @@ function FinanceBoard({
             title="≡ Patrimonio neto"
             tone={dark ? "#3bb0ff" : "#1976d2"}
             total={netWorth}
+            type="patrimony"
           >
             <div className="min-h-24 overflow-y-auto py-2">
               <div className={`mx-3 mb-2 flex justify-between rounded-md px-2 py-1.5 text-xs font-semibold ${groupBackground}`}>
@@ -584,6 +913,132 @@ function FinanceBoard({
               Saldo al {endDateLabel}
             </footer>
           </FinanceBoardCard>
+
+          {customBlocks.map((block, index) => {
+            const definition = BOARD_BLOCK_TYPES.find((option) => option.type === block.type);
+            const tone = dark
+              ? {
+                  income: "#34d27b",
+                  expense: "#ff5a5a",
+                  asset: "#3bb0ff",
+                  liability: "#f5c842",
+                  patrimony: "#3bb0ff",
+                }[block.type]
+              : definition.tone;
+            const fallbackPosition = {
+              x: 408 + (index % 2) * 376,
+              y: 490 + Math.floor(index / 2) * 458,
+            };
+            const total = block.items.reduce((sum, item) => sum + Number(item.amount), 0);
+
+            return (
+              <FinanceBoardCard
+                currency={currency}
+                dark={dark}
+                id={block.id}
+                key={block.id}
+                onDelete={() => saveCustomBlocks(customBlocks.filter((item) => item.id !== block.id))}
+                onDragStart={beginCardDrag}
+                position={positions[block.id] ?? fallbackPosition}
+                title={
+                  <div className="flex min-w-0 flex-1 items-center gap-1">
+                    <span aria-hidden="true">{definition.icon}</span>
+                    <input
+                      aria-label="Nombre del cuadro"
+                      className={`min-w-0 flex-1 bg-transparent text-sm font-bold outline-none focus:ring-1 ${
+                        dark ? "text-[#e9eaee] focus:ring-[#8b909b]" : "text-[#1f2430] focus:ring-slate-400"
+                      }`}
+                      maxLength={60}
+                      onChange={(event) =>
+                        updateCustomBlock(block.id, (current) => ({
+                          ...current,
+                          title: event.target.value,
+                        }))
+                      }
+                      style={{ color: dark ? "#e9eaee" : "#1f2430" }}
+                      value={block.title}
+                    />
+                  </div>
+                }
+                tone={tone}
+                total={total}
+                type={block.type}
+              >
+                <div className="max-h-[320px] min-h-24 overflow-y-auto py-1">
+                  {block.items.map((item) => (
+                    <div className="flex items-center gap-1 px-2 py-1" key={item.id}>
+                      <input
+                        aria-label="Nombre de la partida"
+                        className={`min-w-0 flex-1 rounded px-1 py-1 text-sm outline-none focus:ring-1 ${
+                          dark
+                            ? "text-[#e9eaee] focus:ring-[#8b909b]"
+                            : "text-[#1f2430] focus:ring-slate-400"
+                        }`}
+                        maxLength={60}
+                        onChange={(event) =>
+                          updateCustomBlock(block.id, (current) => ({
+                            ...current,
+                            items: current.items.map((entry) =>
+                              entry.id === item.id ? { ...entry, name: event.target.value } : entry,
+                            ),
+                          }))
+                        }
+                        style={{ color: dark ? "#e9eaee" : "#1f2430" }}
+                        value={item.name}
+                      />
+                      <input
+                        aria-label={`Importe de ${item.name}`}
+                        className={`w-28 rounded px-1 py-1 text-right text-sm tabular-nums outline-none focus:ring-1 ${
+                          dark
+                            ? "text-[#e9eaee] focus:ring-[#8b909b]"
+                            : "text-[#1f2430] focus:ring-slate-400"
+                        }`}
+                        min="0"
+                        onChange={(event) =>
+                          updateCustomBlock(block.id, (current) => ({
+                            ...current,
+                            items: current.items.map((entry) =>
+                              entry.id === item.id
+                                ? { ...entry, amount: event.target.value }
+                                : entry,
+                            ),
+                          }))
+                        }
+                        step="0.01"
+                        style={{ color: dark ? "#e9eaee" : "#1f2430", colorScheme: dark ? "dark" : "light" }}
+                        type="number"
+                        value={item.amount}
+                      />
+                      <button
+                        aria-label={`Eliminar ${item.name}`}
+                        className={`rounded px-1 ${dark ? "text-[#8b909b] hover:text-[#ff5a5a]" : "text-slate-500 hover:text-rose-700"}`}
+                        onClick={() =>
+                          updateCustomBlock(block.id, (current) => ({
+                            ...current,
+                            items: current.items.filter((entry) => entry.id !== item.id),
+                          }))
+                        }
+                        type="button"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <footer className={`border-t px-3 py-2 ${border}`}>
+                  <button
+                    className={`rounded-lg border border-dashed px-2 py-1 text-xs ${
+                      dark ? "border-[#34363c] text-[#e9eaee] hover:text-white" : "border-[#cfd4de] text-slate-700 hover:text-slate-950"
+                    }`}
+                    onClick={() => addCustomItem(block, createBoardItemId("item"))}
+                    type="button"
+                  >
+                    + Partida
+                  </button>
+                </footer>
+              </FinanceBoardCard>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -1839,6 +2294,39 @@ export default function FinanceApp() {
               </Panel>
             </section>
 
+            {analysisCurrency ? (
+              <FinanceBoard
+                currency={analysisCurrency}
+                currencies={analysisCurrencies}
+                endDate={selectedAnalysisEndDate}
+                endDateLabel={analysisEndLabel}
+                expenses={analysisExpenses}
+                income={analysisIncome}
+                onCurrencyChange={setAnalysisCurrencySelection}
+                onDeleteTransaction={(transaction) =>
+                  deleteRecord(
+                    "himb_transactions",
+                    transaction.id,
+                    transaction.kind === "income" ? "el ingreso" : "el gasto",
+                  )
+                }
+                onEditTransaction={(transaction) =>
+                  openEditRecord("himb_transactions", transaction)
+                }
+                onEndDateChange={setAnalysisEndDate}
+                onStartDateChange={setAnalysisStartDate}
+                periodLabel={`${analysisStartLabel} al ${analysisEndLabel}`}
+                rangeValid={analysisRangeValid}
+                startDate={selectedAnalysisStartDate}
+                userId={session.user.id}
+                wealthAccounts={analysisWealth}
+              />
+            ) : (
+              <Panel title="Pizarra financiera">
+                <EmptyState>Agrega una cuenta para visualizar tu pizarra por moneda.</EmptyState>
+              </Panel>
+            )}
+
             <Panel
               description="Comparación mensual de entradas y salidas por moneda, sin mezclar valores."
               title="Flujo de caja de los últimos 6 meses"
@@ -2105,57 +2593,32 @@ export default function FinanceApp() {
         ) : null}
 
         {activeView === "analysis" ? (
-          <div className="space-y-5">
-            <Panel
-              description="Elige un período y una moneda para actualizar las gráficas y tablas."
-              title="Período del análisis"
-            >
-              <div className="grid gap-4 sm:grid-cols-3">
-                <FormField label="Desde">
-                  <input
-                    className={FIELD_CLASS}
-                    onChange={(event) => setAnalysisStartDate(event.target.value)}
-                    type="date"
-                    value={selectedAnalysisStartDate}
-                  />
-                </FormField>
-                <FormField label="Hasta">
-                  <input
-                    className={FIELD_CLASS}
-                    onChange={(event) => setAnalysisEndDate(event.target.value)}
-                    type="date"
-                    value={selectedAnalysisEndDate}
-                  />
-                </FormField>
-                <FormField label="Moneda">
-                  <select
-                    className={FIELD_CLASS}
-                    disabled={!analysisCurrencies.length}
-                    onChange={(event) => setAnalysisCurrencySelection(event.target.value)}
-                    value={analysisCurrency}
-                  >
-                    {analysisCurrencies.map((currency) => (
-                      <option key={currency} value={currency}>{currency}</option>
-                    ))}
-                    {!analysisCurrencies.length ? <option value="">Sin cuentas</option> : null}
-                  </select>
-                </FormField>
-              </div>
-              {!analysisRangeValid ? (
-                <p className="mt-3 text-sm text-rose-700" role="alert">
-                  Selecciona un período válido: la fecha de inicio debe ser anterior o igual a la
-                  fecha final.
-                </p>
-              ) : null}
-            </Panel>
-
+          <div>
             {analysisCurrency ? (
               <FinanceBoard
                 currency={analysisCurrency}
+                currencies={analysisCurrencies}
+                endDate={selectedAnalysisEndDate}
                 endDateLabel={analysisEndLabel}
                 expenses={analysisExpenses}
                 income={analysisIncome}
+                onCurrencyChange={setAnalysisCurrencySelection}
+                onDeleteTransaction={(transaction) =>
+                  deleteRecord(
+                    "himb_transactions",
+                    transaction.id,
+                    transaction.kind === "income" ? "el ingreso" : "el gasto",
+                  )
+                }
+                onEditTransaction={(transaction) =>
+                  openEditRecord("himb_transactions", transaction)
+                }
+                onEndDateChange={setAnalysisEndDate}
+                onStartDateChange={setAnalysisStartDate}
                 periodLabel={`${analysisStartLabel} al ${analysisEndLabel}`}
+                rangeValid={analysisRangeValid}
+                startDate={selectedAnalysisStartDate}
+                userId={session.user.id}
                 wealthAccounts={analysisWealth}
               />
             ) : (
