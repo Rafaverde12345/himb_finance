@@ -396,6 +396,7 @@ function FinanceBoard({
     blockLoadError = `No se pudieron leer los cuadros guardados: ${error.message}`;
   }
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 0.9 });
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [positions, setPositions] = useState({
     income: { x: 32, y: 32 },
     expense: { x: 32, y: 490 },
@@ -417,6 +418,17 @@ function FinanceBoard({
 
     document.addEventListener("fullscreenchange", updateFullscreenState);
     return () => document.removeEventListener("fullscreenchange", updateFullscreenState);
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const updateSize = () =>
+      setViewportSize({ width: viewport.clientWidth, height: viewport.clientHeight });
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(viewport);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -467,7 +479,7 @@ function FinanceBoard({
     };
   };
   const beginCanvasPan = (event) => {
-    if (event.target.closest("[data-board-card]") || !event.target.closest("[data-board-pan-area]")) {
+    if (event.target.closest("[data-board-card]")) {
       return;
     }
 
@@ -491,6 +503,13 @@ function FinanceBoard({
         scale,
       };
     });
+  };
+  const focusCard = (position) => {
+    setCamera((current) => ({
+      ...current,
+      x: viewportSize.width / 2 - (position.x + 170) * current.scale,
+      y: viewportSize.height / 2 - (position.y + 220) * current.scale,
+    }));
   };
   const toggleGroup = (groupId) => {
     setExpandedGroups((current) => ({
@@ -650,6 +669,74 @@ function FinanceBoard({
     });
   };
 
+  const locatorCards = [
+    ...(!hiddenCards.includes("income")
+      ? [{
+          id: "income",
+          title: "Ingresos",
+          position: positions.income,
+          tone: dark ? "#34d27b" : "#15924a",
+        }]
+      : []),
+    ...(!hiddenCards.includes("expense")
+      ? [{
+          id: "expense",
+          title: "Gastos",
+          position: positions.expense,
+          tone: dark ? "#ff5a5a" : "#d33a3a",
+        }]
+      : []),
+    ...(!hiddenCards.includes("wealth")
+      ? [{
+          id: "wealth",
+          title: "Patrimonio neto",
+          position: positions.wealth,
+          tone: dark ? "#3bb0ff" : "#1976d2",
+        }]
+      : []),
+    ...customBlocks.map((block, index) => ({
+      id: block.id,
+      title: block.title || "Cuadro sin nombre",
+      tone: dark
+        ? {
+            income: "#34d27b",
+            expense: "#ff5a5a",
+            asset: "#3bb0ff",
+            liability: "#f5c842",
+            patrimony: "#3bb0ff",
+          }[block.type]
+        : BOARD_BLOCK_TYPES.find((option) => option.type === block.type).tone,
+      position:
+        positions[block.id] ?? {
+          x: 408 + (index % 2) * 376,
+          y: 490 + Math.floor(index / 2) * 458,
+        },
+    })),
+  ].flatMap((card) => {
+    if (!viewportSize.width || !viewportSize.height) return [];
+    const left = camera.x + card.position.x * camera.scale;
+    const top = camera.y + card.position.y * camera.scale;
+    const width = 340 * camera.scale;
+    const height = 440 * camera.scale;
+    if (
+      left + width > 0 &&
+      left < viewportSize.width &&
+      top + height > 0 &&
+      top < viewportSize.height
+    ) {
+      return [];
+    }
+    const targetX = left + width / 2;
+    const targetY = top + height / 2;
+    const angle = Math.atan2(targetY - viewportSize.height / 2, targetX - viewportSize.width / 2);
+    return [{
+      ...card,
+      markerX: Math.min(viewportSize.width - 24, Math.max(24, targetX)),
+      markerY: Math.min(viewportSize.height - 24, Math.max(24, targetY)),
+      angle,
+    }];
+  });
+
   return (
     <section
       aria-label="Pizarra financiera"
@@ -803,7 +890,7 @@ function FinanceBoard({
       </div>
 
       <div
-        className={`relative min-h-[480px] flex-1 overflow-hidden touch-none ${
+        className={`relative min-h-[480px] flex-1 select-none overflow-hidden touch-none ${
           isFullscreen ? "min-h-0" : "h-[min(76vh,760px)]"
         }`}
         onPointerDown={beginCanvasPan}
@@ -1043,6 +1130,33 @@ function FinanceBoard({
             );
           })}
         </div>
+        {locatorCards.map((card) => (
+          <button
+            aria-label={`Ir al cuadro ${card.title}`}
+            className={`absolute z-10 flex h-8 w-8 items-center justify-center rounded-full border shadow-md transition hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              dark
+                ? "border-[#3bb0ff] bg-[#1e1f22] text-[#3bb0ff]"
+                : "border-[#1976d2] bg-white text-[#1976d2]"
+            }`}
+            key={card.id}
+            onClick={(event) => {
+              event.stopPropagation();
+              focusCard(card.position);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            style={{
+              left: card.markerX,
+              top: card.markerY,
+              color: card.tone,
+              borderColor: card.tone,
+              transform: `translate(-50%, -50%) rotate(${card.angle}rad)`,
+            }}
+            title={`Ir al cuadro: ${card.title}`}
+            type="button"
+          >
+            <span aria-hidden="true" className="text-lg leading-none">➤</span>
+          </button>
+        ))}
       </div>
     </section>
   );
